@@ -84,6 +84,7 @@ python -m venv venv
 source venv/bin/activate
 
 # Windows:
+# might need Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser prior to activate
 venv\Scripts\activate
 
 # Install all dependencies
