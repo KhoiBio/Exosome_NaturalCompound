@@ -7,6 +7,8 @@ Fetches PubMed abstracts focused on:
   - Cosmetic & skincare applications
   - Natural compound delivery & therapeutics
   - Plant-derived exosome-like nanoparticles
+  - Invitrx-specific: PEM, Wharton's jelly, cord blood, amniotic,
+    Reluma actives, flow cytometry characterization, GMP/HCT/P
 
 Saves results to: data/abstracts.json
 No API key required — uses NCBI Entrez (free).
@@ -18,7 +20,6 @@ Usage:
 import os
 import json
 import time
-import sys
 from pathlib import Path
 from datetime import datetime
 
@@ -35,11 +36,13 @@ OUTPUT_FILE  = Path(os.getenv("DATA_DIR", "./data")) / "abstracts.json"
 DELAY        = 0.4    # seconds between requests (NCBI allows 3/sec)
 
 # ─── Search Queries ───────────────────────────────────────────────────────────
-# Organized by topic: exosome biology, cosmetics, natural compounds, delivery
 
 QUERIES = [
 
-    # ── Exosome + Cosmetic / Skin ──────────────────────────────────────────
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — ORIGINAL QUERIES
+    # ══════════════════════════════════════════════════════════════════════════
+
     {
         "label": "exosome_skin_cosmetic",
         "query": (
@@ -68,8 +71,6 @@ QUERIES = [
         ),
         "max": 80,
     },
-
-    # ── Natural Compounds + Exosome ────────────────────────────────────────
     {
         "label": "natural_compound_exosome_general",
         "query": (
@@ -110,8 +111,6 @@ QUERIES = [
         ),
         "max": 80,
     },
-
-    # ── Plant-Derived Exosome-Like Nanoparticles ───────────────────────────
     {
         "label": "plant_exosome_nanoparticle",
         "query": (
@@ -134,8 +133,6 @@ QUERIES = [
         ),
         "max": 80,
     },
-
-    # ── Exosome Drug Delivery + Formulation ───────────────────────────────
     {
         "label": "exosome_drug_loading",
         "query": (
@@ -155,8 +152,6 @@ QUERIES = [
         ),
         "max": 100,
     },
-
-    # ── Anti-inflammatory / Antioxidant ───────────────────────────────────
     {
         "label": "exosome_anti_inflammatory_natural",
         "query": (
@@ -167,8 +162,6 @@ QUERIES = [
         ),
         "max": 100,
     },
-
-    # ── Cosmetic Ingredients Specific ─────────────────────────────────────
     {
         "label": "cosmetic_active_ingredients_exosome",
         "query": (
@@ -189,6 +182,296 @@ QUERIES = [
         ),
         "max": 60,
     },
+
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — INVITRX-SPECIFIC QUERIES
+    # Mapped to: Reluma PEM technology, Invitra HCT/P product lines (cord blood,
+    # Wharton's jelly, amniotic fluid/membrane), exosome therapeutics summit
+    # focus, flow cytometry + ELISA characterization, GMP clean room context
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # ── Polypeptide Enriched Media (PEM) — Reluma's core technology ────────
+    {
+        "label": "pem_polypeptide_growth_factor_skin",
+        "query": (
+            '("polypeptide"[Title/Abstract] OR "growth factor"[Title/Abstract] OR '
+            '"matrix protein"[Title/Abstract] OR "peptide complex"[Title/Abstract]) '
+            'AND ("skin"[Title/Abstract] OR "anti-aging"[Title/Abstract] OR '
+            '"luminosity"[Title/Abstract] OR "fibroblast"[Title/Abstract] OR '
+            '"keratinocyte"[Title/Abstract] OR "epidermis"[Title/Abstract])'
+        ),
+        "max": 100,
+    },
+    {
+        "label": "conditioned_media_secretome_skin",
+        "query": (
+            '("conditioned medium"[Title/Abstract] OR "secretome"[Title/Abstract] OR '
+            '"cell-conditioned media"[Title/Abstract]) '
+            'AND ("skin"[Title/Abstract] OR "cosmetic"[Title/Abstract] OR '
+            '"anti-aging"[Title/Abstract] OR "wound"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "stem_cell_secretome_cosmetic_rejuvenation",
+        "query": (
+            '"stem cell"[Title/Abstract] AND '
+            '("secretome"[Title/Abstract] OR "paracrine"[Title/Abstract] OR '
+            '"conditioned medium"[Title/Abstract]) '
+            'AND ("skin"[Title/Abstract] OR "cosmetic"[Title/Abstract] OR '
+            '"rejuvenation"[Title/Abstract] OR "anti-aging"[Title/Abstract])'
+        ),
+        "max": 100,
+    },
+
+    # ── Wharton's Jelly MSC ────────────────────────────────────────────────
+    {
+        "label": "whartons_jelly_exosome_regenerative",
+        "query": (
+            '("Wharton jelly"[Title/Abstract] OR "WJ-MSC"[Title/Abstract]) '
+            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract] OR '
+            '"secretome"[Title/Abstract]) '
+            'AND ("skin"[Title/Abstract] OR "wound"[Title/Abstract] OR '
+            '"regenerative"[Title/Abstract] OR "anti-inflammatory"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "umbilical_cord_msc_tissue_repair",
+        "query": (
+            '("umbilical cord MSC"[Title/Abstract] OR "UC-MSC"[Title/Abstract] OR '
+            '"Wharton jelly"[Title/Abstract]) '
+            'AND ("tissue repair"[Title/Abstract] OR "wound healing"[Title/Abstract] OR '
+            '"anti-inflammatory"[Title/Abstract] OR "regenerative"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+
+    # ── Umbilical Cord Blood Plasma (hUCBP) ───────────────────────────────
+    {
+        "label": "cord_blood_plasma_skin_growth_factor",
+        "query": (
+            '("cord blood plasma"[Title/Abstract] OR '
+            '"umbilical cord blood plasma"[Title/Abstract] OR '
+            '"cord blood"[Title/Abstract]) '
+            'AND ("skin"[Title/Abstract] OR "wound"[Title/Abstract] OR '
+            '"growth factor"[Title/Abstract] OR "cosmetic"[Title/Abstract] OR '
+            '"regenerative"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "cord_blood_exosome_therapeutic",
+        "query": (
+            '("cord blood"[Title/Abstract] OR "umbilical cord"[Title/Abstract]) '
+            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("therapeutic"[Title/Abstract] OR "anti-inflammatory"[Title/Abstract] OR '
+            '"regenerative"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+
+    # ── Amniotic Fluid / Membrane ──────────────────────────────────────────
+    {
+        "label": "amniotic_fluid_exosome_cosmetic",
+        "query": (
+            '("amniotic fluid"[Title/Abstract] OR "amniotic membrane"[Title/Abstract] OR '
+            '"amnion"[Title/Abstract]) '
+            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract] OR '
+            '"growth factor"[Title/Abstract]) '
+            'AND ("skin"[Title/Abstract] OR "wound"[Title/Abstract] OR '
+            '"cosmetic"[Title/Abstract] OR "regenerative"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "amniotic_membrane_wound_burn_healing",
+        "query": (
+            '("amniotic membrane"[Title/Abstract] OR "amniotic fluid"[Title/Abstract]) '
+            'AND ("wound healing"[Title/Abstract] OR "tissue repair"[Title/Abstract] OR '
+            '"burn"[Title/Abstract] OR "ulcer"[Title/Abstract] OR '
+            '"anti-inflammatory"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+
+    # ── Burn / Diabetic Ulcer / Ocular — Invitrx founding indications ─────
+    {
+        "label": "cell_therapy_burn_diabetic_ulcer",
+        "query": (
+            '("stem cell"[Title/Abstract] OR "cell therapy"[Title/Abstract]) '
+            'AND ("burn"[Title/Abstract] OR "skin graft"[Title/Abstract] OR '
+            '"diabetic ulcer"[Title/Abstract] OR "chronic wound"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "exosome_ocular_ophthalmic_surface",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("ocular"[Title/Abstract] OR "ophthalmic"[Title/Abstract] OR '
+            '"cornea"[Title/Abstract] OR "dry eye"[Title/Abstract] OR '
+            '"ocular surface"[Title/Abstract])'
+        ),
+        "max": 60,
+    },
+
+    # ── EV Characterization — directly ties to your flow cytometry + ELISA ─
+    {
+        "label": "exosome_flow_cytometry_surface_markers",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("flow cytometry"[Title/Abstract] OR '
+            '"nanoparticle tracking analysis"[Title/Abstract] OR "NTA"[Title/Abstract]) '
+            'AND ("CD9"[Title/Abstract] OR "CD63"[Title/Abstract] OR '
+            '"CD81"[Title/Abstract] OR "tetraspanin"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "exosome_elisa_cytokine_quantification",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("ELISA"[Title/Abstract] OR "cytokine"[Title/Abstract] OR '
+            '"TGF-beta"[Title/Abstract] OR "VEGF"[Title/Abstract] OR '
+            '"EGF"[Title/Abstract] OR "IGF"[Title/Abstract] OR "FGF"[Title/Abstract]) '
+            'AND ("skin"[Title/Abstract] OR "wound"[Title/Abstract] OR '
+            '"cosmetic"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "exosome_mirna_small_rna_cargo_skin",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("miRNA"[Title/Abstract] OR "small RNA"[Title/Abstract] OR '
+            '"non-coding RNA"[Title/Abstract] OR "RNA cargo"[Title/Abstract]) '
+            'AND ("skin"[Title/Abstract] OR "fibroblast"[Title/Abstract] OR '
+            '"keratinocyte"[Title/Abstract] OR "wound"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "exosome_proteomics_cargo_profiling",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("proteomics"[Title/Abstract] OR "protein cargo"[Title/Abstract] OR '
+            '"mass spectrometry"[Title/Abstract]) '
+            'AND ("skin"[Title/Abstract] OR "cosmetic"[Title/Abstract] OR '
+            '"stem cell"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+
+    # ── Exosome Isolation + GMP Manufacturing ─────────────────────────────
+    {
+        "label": "exosome_isolation_gmp_scale_up",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("isolation"[Title/Abstract] OR "purification"[Title/Abstract] OR '
+            '"ultracentrifugation"[Title/Abstract] OR "size exclusion"[Title/Abstract]) '
+            'AND ("GMP"[Title/Abstract] OR "manufacturing"[Title/Abstract] OR '
+            '"scale-up"[Title/Abstract] OR "clinical grade"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "exosome_stability_storage_lyophilization",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("stability"[Title/Abstract] OR "storage"[Title/Abstract] OR '
+            '"lyophilization"[Title/Abstract] OR "freeze-drying"[Title/Abstract] OR '
+            '"shelf life"[Title/Abstract] OR "formulation"[Title/Abstract])'
+        ),
+        "max": 60,
+    },
+
+    # ── HCT/P Regulatory + FDA Safety ─────────────────────────────────────
+    {
+        "label": "hctp_fda_regulatory_quality_control",
+        "query": (
+            '("HCT/P"[Title/Abstract] OR "human cell tissue"[Title/Abstract] OR '
+            '"tissue bank"[Title/Abstract]) '
+            'AND ("safety"[Title/Abstract] OR "regulatory"[Title/Abstract] OR '
+            '"FDA"[Title/Abstract] OR "quality control"[Title/Abstract] OR '
+            '"lot release"[Title/Abstract])'
+        ),
+        "max": 60,
+    },
+    {
+        "label": "exosome_cosmetic_clinical_safety",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("safety"[Title/Abstract] OR "clinical trial"[Title/Abstract] OR '
+            '"toxicity"[Title/Abstract] OR "adverse effect"[Title/Abstract]) '
+            'AND ("cosmetic"[Title/Abstract] OR "topical"[Title/Abstract] OR '
+            '"skin"[Title/Abstract])'
+        ),
+        "max": 60,
+    },
+
+    # ── Plastic Surgery / Reconstructive ──────────────────────────────────
+    {
+        "label": "cell_therapy_plastic_surgery_scar",
+        "query": (
+            '("stem cell"[Title/Abstract] OR "cell therapy"[Title/Abstract] OR '
+            'exosome[Title/Abstract]) '
+            'AND ("plastic surgery"[Title/Abstract] OR "reconstructive"[Title/Abstract] OR '
+            '"fat grafting"[Title/Abstract] OR "scar"[Title/Abstract] OR '
+            '"keloid"[Title/Abstract])'
+        ),
+        "max": 60,
+    },
+
+    # ── Exosome Cancer + Gene Engineering — Asia summit 2025-2026 ─────────
+    {
+        "label": "exosome_cancer_immunotherapy_delivery",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("cancer"[Title/Abstract] OR "tumor"[Title/Abstract] OR '
+            '"immunotherapy"[Title/Abstract]) '
+            'AND ("drug delivery"[Title/Abstract] OR "therapeutic"[Title/Abstract] OR '
+            '"engineered"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+    {
+        "label": "engineered_exosome_surface_modification",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("gene engineering"[Title/Abstract] OR '
+            '"surface modification"[Title/Abstract] OR "engineered"[Title/Abstract] OR '
+            '"functionalized"[Title/Abstract]) '
+            'AND ("targeted delivery"[Title/Abstract] OR "therapeutic"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+
+    # ── Longevity / Anti-Aging Biology ────────────────────────────────────
+    {
+        "label": "exosome_longevity_senescence_aging",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("aging"[Title/Abstract] OR "longevity"[Title/Abstract] OR '
+            '"senescence"[Title/Abstract] OR "rejuvenation"[Title/Abstract] OR '
+            '"healthspan"[Title/Abstract])'
+        ),
+        "max": 80,
+    },
+
+    # ── Stem Cell QC / Cell Viability ─────────────────────────────────────
+    {
+        "label": "stem_cell_qc_viability_potency_gmp",
+        "query": (
+            '"stem cell"[Title/Abstract] '
+            'AND ("quality control"[Title/Abstract] OR "cell viability"[Title/Abstract] OR '
+            '"potency assay"[Title/Abstract] OR "lot release"[Title/Abstract] OR '
+            '"GMP"[Title/Abstract] OR "sterility"[Title/Abstract])'
+        ),
+        "max": 60,
+    },
+
 ]
 
 
@@ -221,7 +504,6 @@ def parse_record(record: dict, label: str) -> dict | None:
         pmid    = str(record["MedlineCitation"]["PMID"])
         title   = str(article.get("ArticleTitle", "")).strip()
 
-        # Abstract (structured or plain)
         abstract_text = ""
         abstract_obj  = article.get("Abstract", {})
         if abstract_obj:
@@ -239,7 +521,6 @@ def parse_record(record: dict, label: str) -> dict | None:
         if not abstract_text or len(abstract_text) < 80:
             return None
 
-        # Authors
         authors = []
         for author in article.get("AuthorList", [])[:5]:
             last     = str(author.get("LastName", ""))
@@ -247,14 +528,12 @@ def parse_record(record: dict, label: str) -> dict | None:
             if last:
                 authors.append(f"{last} {initials}".strip())
 
-        # Journal + year
         journal_info = article.get("Journal", {})
         journal      = str(journal_info.get("Title", "Unknown Journal"))
         pub_date     = journal_info.get("JournalIssue", {}).get("PubDate", {})
         year_raw     = pub_date.get("Year", pub_date.get("MedlineDate", "2000"))
         year         = str(year_raw)[:4]
 
-        # Keywords & MeSH
         keywords = []
         for kw_group in record["MedlineCitation"].get("KeywordList", []):
             for kw in kw_group:
@@ -295,13 +574,18 @@ def deduplicate(records: list) -> list:
 def main():
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+    n_original = 14
+    n_invitrx  = len(QUERIES) - n_original
+
     print("=" * 65)
     print("ExoRAG — PubMed Fetcher")
-    print("Focus: Exosome · Cosmetic · Natural Compounds")
+    print("Focus: Exosome · Cosmetic · Natural Compounds · Invitrx")
     print("=" * 65)
-    print(f"Entrez email : {Entrez.email}")
-    print(f"Output       : {OUTPUT_FILE}")
-    print(f"Queries      : {len(QUERIES)}")
+    print(f"Entrez email      : {Entrez.email}")
+    print(f"Output            : {OUTPUT_FILE}")
+    print(f"Total queries     : {len(QUERIES)}")
+    print(f"  Original        : {n_original}")
+    print(f"  Invitrx-specific: {n_invitrx}")
     print()
 
     all_parsed = []
@@ -320,25 +604,21 @@ def main():
         records = fetch_details(pmids)
         print(f"{len(records)} records fetched")
 
-        parsed = []
-        for r in records:
-            p = parse_record(r, q["label"])
-            if p:
-                parsed.append(p)
-
+        parsed = [parse_record(r, q["label"]) for r in records]
+        parsed = [p for p in parsed if p]
         print(f"  Parsed: {len(parsed)} usable abstracts")
         all_parsed.extend(parsed)
 
     unique = deduplicate(all_parsed)
 
     print(f"\n{'=' * 65}")
-    print(f"Total fetched  : {len(all_parsed)}")
-    print(f"After dedup    : {len(unique)}")
+    print(f"Total fetched     : {len(all_parsed)}")
+    print(f"After dedup       : {len(unique)}")
 
     with open(OUTPUT_FILE, "w") as f:
         json.dump(unique, f, indent=2)
 
-    print(f"Saved to       : {OUTPUT_FILE}")
+    print(f"Saved to          : {OUTPUT_FILE}")
 
     if unique:
         s = unique[0]
