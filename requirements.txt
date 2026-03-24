@@ -1,0 +1,23 @@
+# PubMed ingestion
+biopython==1.84
+requests==2.32.3
+
+# Vector database (local)
+chromadb==0.6.3
+
+# Local embeddings (free, no API key)
+sentence-transformers==3.3.1
+
+# LLM — Anthropic Claude API
+anthropic==0.49.0
+
+# App UI
+streamlit==1.41.1
+
+# Data handling
+pandas==2.2.3
+numpy==1.26.4
+
+# Utilities
+python-dotenv==1.0.1
+tqdm==4.67.1

@@ -1,0 +1,33 @@
+# ── API keys and secrets — NEVER commit these ──
+.env
+
+# ── Generated data — too large for GitHub ──
+data/abstracts.json
+chroma_db/
+outputs/
+
+# ── Python environment ──
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── OS files ──
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Streamlit cache ──
+.streamlit/
