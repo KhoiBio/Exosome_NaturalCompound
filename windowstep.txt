@@ -9,3 +9,15 @@
 9. fetch pubmed :python scripts\01_fetch_pubmed.py
 10. build chromaDB local index : python .\scripts\02_build_index.py
 11. intialize the app : streamlit run scripts/04_app.py
+
+If we don't want to use claude API, we can use Ollama instead which is free. Run the below before step 11 :
+
+# ── LLM Option B: Ollama (free, fully local, no account needed) ─
+# Install Ollama from: https://ollama.com
+# Then run: ollama pull llama3.2
+# Then run: ollama serve
+# The app auto-detects Ollama if it is running
+OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.2
+
+
