@@ -9,6 +9,14 @@ ExoRAG mines PubMed literature on exosomes, cosmetic applications, and natural c
 then lets you ask product development questions in plain English. Every answer is grounded
 in real papers with clickable PubMed citations.
 
+## Screenshots
+
+### App Homepage
+![Homepage](homepage.png)
+
+### Query Results
+![Query Results](querry%20question%20and%20result.png)
+
 **Architecture:**
 ```
 PubMed (free API) → abstracts.json → ChromaDB (local) ← sentence-transformers (local)
