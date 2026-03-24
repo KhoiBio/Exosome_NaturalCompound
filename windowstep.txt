@@ -1,0 +1,11 @@
+1. start powershell
+2. cd to downloaded folder
+3. cd Exosome_NaturalCompound-main
+4. run setup for window with .\setup_windows.bat
+5. edit claude api and pubmed email in .env via notepad
+6. bypass window security :Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+7. .\venv\Scripts\activate
+8. install requirement : pip install biopython requests chromadb sentence-transformers anthropic streamlit pandas tqdm python-dotenv
+9. fetch pubmed :python scripts\01_fetch_pubmed.py
+10. build chromaDB local index : python .\scripts\02_build_index.py
+11. intialize the app : streamlit run scripts/04_app.py
