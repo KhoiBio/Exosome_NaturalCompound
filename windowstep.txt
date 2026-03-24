@@ -8,7 +8,9 @@
 8. install requirement : pip install biopython requests chromadb sentence-transformers anthropic streamlit pandas tqdm python-dotenv
 9. fetch pubmed :python scripts\01_fetch_pubmed.py
 10. build chromaDB local index : python .\scripts\02_build_index.py
-11. intialize the app : streamlit run scripts/04_app.py
+11. download ollama for free local LLM :https://ollama.com/
+12. prepare ollama : ollama pull llama3.2  .Then run :  ollama serve
+13. intialize the app : streamlit run scripts/04_app.py
 
 If we don't want to use claude API, we can use Ollama instead which is free. Run the below before step 11 :
 
