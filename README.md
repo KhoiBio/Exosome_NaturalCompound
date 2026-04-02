@@ -67,6 +67,21 @@ exorag/
 
 ---
 
+## Short summary of preparation step for Window version
+1. Download Python 3.10+
+2. Start PowerShell
+3. cd Exosome_NaturalCompound-main
+4. run setup for the window with .\setup_windows.bat
+5. edit claude api and PubMed email in .env via Notepad
+6. bypass window security: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+7. .\venv\Scripts\activate
+8. install requirement: pip install biopython requests chromadb sentence-transformers anthropic streamlit pandas tqdm python-dotenv
+9. fetch pubmed: python scripts\01_fetch_pubmed.py
+10. build chromaDB local index: python .\scripts\02_build_index.py
+11. Download Ollama for free local LLM: https://ollama.com/
+12. Prepare Ollama : ollama pull llama3.2:latest
+13. initialize the app : streamlit run scripts/04_app.py
+
 ## Knowledge Base — What You Can Search
 
 ExoRAG indexes **28 targeted PubMed queries** across two sections.
