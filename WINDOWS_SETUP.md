@@ -10,8 +10,30 @@
 - [ ] An Anthropic Claude API key (get one free at https://console.anthropic.com)
 - [ ] ~1GB free disk space
 - [ ] 20–30 minutes for first-time setup
+- [ ] Ollama
+- [ ] Python 3.10 +
 
 ---
+## Short list of what need to be done in order 
+## if you want to save time
+
+1. Start PowerShell
+2. cd to the downloaded folder
+3. cd Exosome_NaturalCompound-main
+4. run setup for the window with .\setup_windows.bat
+5. edit claude api and PubMed email in .env via Notepad
+6. bypass window security: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+7. .\venv\Scripts\activate
+8. install requirement: pip install biopython requests chromadb sentence-transformers anthropic streamlit pandas tqdm python-dotenv
+9. fetch pubmed: python scripts\01_fetch_pubmed.py
+10. build chromaDB local index: python .\scripts\02_build_index.py
+11. Download Ollama for free local LLM:https://ollama.com/
+12. prepare Ollama : ollama pull llama3.2:latest
+13. initialize the app : streamlit run scripts/04_app.py
+
+
+
+
 
 ## Step 1 — Install Python
 
