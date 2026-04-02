@@ -309,12 +309,3 @@ CLAUDE_MODEL=claude-3-5-sonnet-20241022
 
 ---
 
-## Interview Talking Points
-
-1. **Fully local** — ChromaDB and embeddings run on your laptop; no data leaves your machine except the Claude API call
-2. **Domain-specific** — 28 queries tuned to exosome cosmetics, regenerative biologics, and cell therapy manufacturing; not a generic literature bot
-3. **Covers the full product stack** — from PEM/secretome science (Reluma) to Wharton's jelly and amniotic EV biology (Invitra) to GMP manufacturing QC
-4. **Every answer is cited** — LLM synthesizes retrieved text with visible PMID sources; no hallucinated compounds
-5. **Scalable** — same pipeline indexes internal formulation documents, lab notebooks, or patents alongside PubMed
-6. **Prior validation** — same architecture built for GBM radioresistance literature at USC; proven pattern applied to a new domain
-7. **Stays current** — schedule `01_fetch_pubmed.py` monthly to pull new literature automatically
