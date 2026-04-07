@@ -1,3 +1,33 @@
+Topic breakdown:
+  car_nk_cancer_therapy                               191 papers
+  exosome_cancer_immunotherapy                        182 papers
+  exosome_cancer_drug_delivery                        180 papers
+  nk_cell_cancer_therapy                              154 papers
+  exosome_leukemia_lymphoma                           135 papers
+  exosome_cancer_biomarker                            129 papers
+  exosome_breast_lung_cancer                          128 papers
+  exosome_glioblastoma                                124 papers
+  nk_cell_solid_tumor                                 113 papers
+  nk_cell_hematologic_malignancy                      106 papers
+  exosome_mirna_cancer                                104 papers
+  exosome_vs_cell_therapy_comparison                   97 papers
+  exosome_tumor_microenvironment                       82 papers
+  nk_cell_glioblastoma                                 74 papers
+  car_nk_engineering                                   73 papers
+  nk_cell_exosome_cytotoxicity                         71 papers
+  exosome_clinical_cancer                              69 papers
+  nk_exosome_cytotoxic_cargo                           63 papers
+  exosome_perforin_granzyme                            58 papers
+  engineered_exosome_cancer                            53 papers
+  car_nk_clinical_trial                                38 papers
+  car_t_exosome_core                                   36 papers
+  immune_cell_exosome_therapeutic                      23 papers
+  exosome_car_antigen_targeting                        14 papers
+  car_nk_exosome_core                                  12 papers
+  nk_exosome_car_display                                5 papers
+  car_nk_exosome_cell_free                              2 papers
+  car_nk_derived_exosome_therapeutic                    2 papers
+
 # ExoRAG — Exosome · Cosmetic · Natural Compound Intelligence
 ### A fully local RAG pipeline using PubMed + ChromaDB + Claude AI
 
