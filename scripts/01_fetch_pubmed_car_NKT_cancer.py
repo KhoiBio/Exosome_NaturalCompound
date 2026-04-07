@@ -3,11 +3,15 @@
 01_fetch_pubmed.py
 ==================
 Fetches PubMed abstracts focused on:
-  - CAR-NK cell therapy & exosomes
+  - CAR-NK-derived exosomes as therapeutic agents (primary focus)
+  - NK cell-derived extracellular vesicles for cancer killing
   - CAR-T cell therapy & exosomes
   - Exosome-mediated cancer immunotherapy
-  - NK cell-derived extracellular vesicles
-  - Exosome engineering for cancer targeting
+  - Exosome engineering, loading, and targeting
+
+Core hypothesis: CAR-NK cells produce exosomes that inherit CAR targeting
+and NK cytotoxic cargo (perforin, granzyme, TRAIL, NKG2D) → cell-free
+immunotherapy with reduced toxicity and off-the-shelf potential.
 
 Saves results to: data/abstracts.json
 No API key required — uses NCBI Entrez (free).
@@ -39,6 +43,93 @@ DELAY        = 0.4    # seconds between requests (NCBI allows 3/sec)
 # Organized by topic: CAR-NK, CAR-T, exosome cancer immunotherapy
 
 QUERIES = [
+
+    # ── CAR-NK-DERIVED EXOSOME AS THERAPEUTIC AGENT (primary focus) ──────
+    # These capture the specific paradigm: CAR-NK cells PRODUCE exosomes
+    # that are harvested and used as the drug — cell-free immunotherapy.
+    {
+        "label": "car_nk_derived_exosome_therapeutic",
+        "query": (
+            '("CAR-NK"[Title/Abstract] OR "CAR NK"[Title/Abstract] OR '
+            '"chimeric antigen receptor natural killer"[Title/Abstract]) '
+            'AND ("derived exosome"[Title/Abstract] OR "secreted exosome"[Title/Abstract] OR '
+            '"produced exosome"[Title/Abstract] OR "cell-derived extracellular vesicle"[Title/Abstract] OR '
+            '"exosome secretion"[Title/Abstract] OR "exosome release"[Title/Abstract])'
+        ),
+        "max": 200,
+    },
+    {
+        "label": "car_nk_exosome_cell_free",
+        "query": (
+            '("CAR-NK"[Title/Abstract] OR "CAR NK"[Title/Abstract]) '
+            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("cell-free"[Title/Abstract] OR "acellular"[Title/Abstract] OR '
+            '"off-the-shelf"[Title/Abstract] OR "allogeneic"[Title/Abstract])'
+        ),
+        "max": 150,
+    },
+    {
+        "label": "nk_exosome_car_display",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("CAR"[Title/Abstract] OR "chimeric antigen receptor"[Title/Abstract]) '
+            'AND ("surface display"[Title/Abstract] OR "membrane display"[Title/Abstract] OR '
+            '"expressing"[Title/Abstract] OR "decorated"[Title/Abstract] OR '
+            '"functionalized"[Title/Abstract] OR "armed"[Title/Abstract])'
+        ),
+        "max": 150,
+    },
+    {
+        "label": "nk_exosome_cytotoxic_cargo",
+        "query": (
+            '("NK cell"[Title/Abstract] OR "natural killer"[Title/Abstract]) '
+            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("perforin"[Title/Abstract] OR "granzyme"[Title/Abstract] OR '
+            '"TRAIL"[Title/Abstract] OR "FasL"[Title/Abstract] OR '
+            '"NKG2D"[Title/Abstract] OR "cytotoxic"[Title/Abstract]) '
+            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract])'
+        ),
+        "max": 150,
+    },
+    {
+        "label": "immune_cell_exosome_therapeutic",
+        "query": (
+            '("immune cell-derived exosome"[Title/Abstract] OR '
+            '"T cell-derived exosome"[Title/Abstract] OR '
+            '"NK cell-derived exosome"[Title/Abstract] OR '
+            '"macrophage-derived exosome"[Title/Abstract] OR '
+            '"dendritic cell-derived exosome"[Title/Abstract]) '
+            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract] OR '
+            '"antitumor"[Title/Abstract] OR "anti-tumor"[Title/Abstract])'
+        ),
+        "max": 150,
+    },
+    {
+        "label": "exosome_car_antigen_targeting",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("CD19"[Title/Abstract] OR "CD20"[Title/Abstract] OR '
+            '"CD33"[Title/Abstract] OR "HER2"[Title/Abstract] OR '
+            '"EGFR"[Title/Abstract] OR "EpCAM"[Title/Abstract] OR '
+            '"mesothelin"[Title/Abstract] OR "GD2"[Title/Abstract] OR '
+            '"CD123"[Title/Abstract] OR "BCMA"[Title/Abstract]) '
+            'AND ("natural killer"[Title/Abstract] OR "NK"[Title/Abstract] OR '
+            '"CAR"[Title/Abstract])'
+        ),
+        "max": 150,
+    },
+    {
+        "label": "exosome_vs_cell_therapy_comparison",
+        "query": (
+            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
+            'AND ("cell therapy"[Title/Abstract] OR "adoptive therapy"[Title/Abstract]) '
+            'AND ("alternative"[Title/Abstract] OR "superior"[Title/Abstract] OR '
+            '"advantage"[Title/Abstract] OR "compared"[Title/Abstract] OR '
+            '"cytokine release syndrome"[Title/Abstract] OR "CRS"[Title/Abstract] OR '
+            '"neurotoxicity"[Title/Abstract] OR "ICANS"[Title/Abstract])'
+        ),
+        "max": 100,
+    },
 
     # ── CAR-NK + Exosome ──────────────────────────────────────────────────
     {
@@ -364,18 +455,40 @@ def score_evidence(study_type: str) -> float:
 
 
 def score_relevance(text: str) -> float:
-    """Score relevance to CAR-NK / exosome / cancer topic."""
+    """
+    Score relevance to the core hypothesis:
+    CAR-NK cells PRODUCE exosomes → harvested as cell-free cancer therapy.
+
+    Tier 1 (0.6): CAR-NK + exosome + derived/secreted/produced  ← exact paradigm
+    Tier 2 (0.4): NK + exosome + cytotoxic cargo (perforin/TRAIL/granzyme)
+    Tier 3 (0.3): CAR-NK + exosome (any context)
+    Tier 4 (0.2): NK + exosome + cancer
+    Tier 5 (0.1): exosome + cancer (broad)
+    """
     t = text.lower()
-    score = 0.0
-    # High-value: CAR-NK + exosome combo
-    car_nk = any(k in t for k in ["car-nk", "car nk", "chimeric antigen receptor nk"])
-    exo    = any(k in t for k in ["exosome", "extracellular vesicle", "nanovesicle"])
-    cancer = any(k in t for k in ["cancer", "tumor", "leukemia", "lymphoma", "glioma"])
-    if car_nk and exo:  score += 0.5
-    if car_nk:          score += 0.2
-    if exo and cancer:  score += 0.2
-    if cancer:          score += 0.1
-    return round(min(score, 1.0), 3)
+
+    car_nk      = any(k in t for k in ["car-nk", "car nk", "chimeric antigen receptor nk",
+                                         "chimeric antigen receptor natural killer"])
+    nk          = any(k in t for k in ["natural killer", "nk cell", "nk-92"])
+    exo         = any(k in t for k in ["exosome", "extracellular vesicle", "nanovesicle", "ev"])
+    derived     = any(k in t for k in ["derived exosome", "secreted exosome", "produced exosome",
+                                        "exosome secretion", "exosome release", "cell-free",
+                                        "acellular", "off-the-shelf"])
+    cytotoxic   = any(k in t for k in ["perforin", "granzyme", "trail", "fasl", "nkg2d",
+                                        "dnam-1", "cytotoxic"])
+    car_display = any(k in t for k in ["surface display", "membrane display", "car-expressing",
+                                        "armed", "decorated", "functionalized", "car display"])
+    cancer      = any(k in t for k in ["cancer", "tumor", "leukemia", "lymphoma",
+                                        "glioma", "glioblastoma", "malignancy"])
+
+    if car_nk and exo and derived:          return 1.0   # Tier 1 — exact paradigm
+    if car_nk and exo and car_display:      return 0.9   # CAR displayed on exosome surface
+    if nk and exo and cytotoxic and cancer: return 0.8   # Tier 2 — NK exosome cytotoxic cargo
+    if car_nk and exo:                      return 0.7   # Tier 3 — CAR-NK + exosome any
+    if nk and exo and cancer:               return 0.5   # Tier 4 — NK exosome cancer
+    if exo and cancer:                      return 0.3   # Tier 5 — broad exosome cancer
+    if cancer:                              return 0.1
+    return 0.0
 
 
 def score_recency(year: str) -> float:
@@ -523,7 +636,7 @@ def main():
 
     print("=" * 65)
     print("ExoRAG — PubMed Fetcher")
-    print("Focus: CAR-NK · CAR-T · Exosome · Cancer Immunotherapy")
+    print("Focus: CAR-NK-Derived Exosomes as Cancer Immunotherapy")
     print("=" * 65)
     print(f"Entrez email : {Entrez.email}")
     print(f"Output       : {OUTPUT_FILE}")
@@ -592,16 +705,22 @@ def main():
         in_vivo  = sum(1 for r in unique_sorted if r.get("study_type") == "in_vivo")
         in_vitro = sum(1 for r in unique_sorted if r.get("study_type") == "in_vitro")
         reviews  = sum(1 for r in unique_sorted if r.get("study_type") == "review")
-        car_nk   = sum(1 for r in unique_sorted
-                       if any("car-nk" in e.lower() or "car nk" in e.lower()
-                              for e in r.get("entities", {}).get("immunotherapy", [])))
+        car_nk_exo_derived = sum(
+            1 for r in unique_sorted
+            if r.get("relevance_score", 0) >= 1.0
+        )
+        car_nk_exo = sum(
+            1 for r in unique_sorted
+            if r.get("relevance_score", 0) >= 0.7
+        )
+        print(f"\nParadigm match (CAR-NK → exosome → cancer, exact): {car_nk_exo_derived}")
+        print(f"High relevance (score ≥ 0.7):                       {car_nk_exo}")
 
         print(f"\nStudy types:")
         print(f"  Clinical : {clinical}")
         print(f"  In vivo  : {in_vivo}")
         print(f"  In vitro : {in_vitro}")
         print(f"  Reviews  : {reviews}")
-        print(f"\nCAR-NK papers: {car_nk}")
 
     print(f"\n✓ Done — next step: python scripts/02_build_index.py")
 
