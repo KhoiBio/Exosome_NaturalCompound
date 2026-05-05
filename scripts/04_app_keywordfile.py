@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-04_app.py — ExoRAG Decision Engine
-====================================
-Focus: CAR-NK-derived exosomes as cancer immunotherapy
-
+04_app.py — RAG Literature Search
+===================================
 Tabs:
-  1. Literature Q&A         — RAG query with cited answers
-  2. Target Ranker          — Score cancer targets by CAR-NK exosome evidence
-  3. Mechanism Explorer     — Map NK kill mechanisms carried in exosomes
-  4. Experimental Readiness — Can we run this assay tomorrow?
-  5. Study Comparator       — In vitro vs in vivo vs clinical evidence gaps
-  6. Feedback Loop          — Log internal results, build proprietary intelligence
+  1. Literature Q&A        — RAG query with cited answers
+  2. Evidence Ranker       — Score treatments/approaches by evidence strength
+  3. Hypothesis Generator  — Auto-generate testable hypotheses from literature
+  4. Mechanism Clusters    — Group findings by biological target/pathway
+  5. Experimental Readiness — Can we test this tomorrow?
+  6. Feedback Loop         — Log results, build internal intelligence
 """
 
 import os
@@ -30,7 +28,7 @@ load_dotenv()
 # ─── Config ───────────────────────────────────────────────────────────────────
 
 CHROMA_DIR    = Path(os.getenv("CHROMA_DIR", "./chroma_db"))
-COLLECTION    = "exorag_car_nk"
+COLLECTION    = os.getenv("CHROMA_COLLECTION", "rag_literature")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL  = os.getenv("CLAUDE_MODEL", "claude-3-5-haiku-20241022")
 OLLAMA_URL    = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -38,23 +36,17 @@ OLLAMA_MODEL  = os.getenv("OLLAMA_MODEL", "llama3.2")
 
 # ─── Prompts ──────────────────────────────────────────────────────────────────
 
-RAG_SYSTEM = """You are a Senior Scientific Advisor specializing in CAR-NK cell therapy,
-NK cell-derived exosomes, and cancer immunotherapy. Your focus is on the paradigm where
-CAR-NK cells PRODUCE exosomes that are harvested and used as cell-free cancer therapeutics.
+RAG_SYSTEM = """You are a Senior Scientific Advisor with expertise in biomedical research.
+Answer with a RESEARCH focus using retrieved PubMed literature.
+Cite sources as "Author et al., YEAR (PMID)". Clearly distinguish in vitro, in vivo, and clinical evidence.
+Highlight gaps, contradictions, and areas needing further study."""
 
-Answer with a TRANSLATIONAL R&D focus using retrieved PubMed literature.
-Cite as "Author et al., YEAR (PMID: XXXXX)". Distinguish in vitro / in vivo / clinical evidence.
-Highlight mechanistic insights about how NK-derived exosomes kill tumor cells
-(perforin, granzyme, TRAIL, FasL, NKG2D ligands, CAR antigen recognition)."""
-
-RANKER_SYSTEM = """You are a cancer immunotherapy R&D analyst. Rank cancer targets for
-CAR-NK-derived exosome therapy based on the retrieved literature.
+RANKER_SYSTEM = """You are a biomedical research analyst. Rank treatments, approaches, or interventions from the literature.
 
 You MUST respond with ONLY a valid JSON array. No text before or after. No markdown. No explanation.
 
 Each array item MUST have exactly these keys:
-{"target": "name", "score": 7.5, "evidence_level": "Moderate", "cancer_type": "one phrase",
- "mechanism": "one phrase", "exosome_relevance": "one sentence", "novelty": "Medium", "summary": "one sentence"}
+{"treatment": "name", "score": 7.5, "evidence_level": "Moderate", "mechanism": "one phrase", "safety_profile": "one sentence", "novelty": "Medium", "summary": "one sentence"}
 
 score: number 0-10
 evidence_level: exactly one of: High, Moderate, Low, Preliminary
@@ -62,102 +54,78 @@ novelty: exactly one of: High, Medium, Low
 
 OUTPUT ONLY THE JSON ARRAY. START WITH [ AND END WITH ]."""
 
-MECHANISM_SYSTEM = """You are a CAR-NK exosome biologist. Map the cytotoxic mechanisms
-carried by NK cell-derived exosomes based on the literature.
+HYPOTHESIS_SYSTEM = """You are a biomedical scientist generating testable hypotheses from literature.
 
 You MUST respond with ONLY a valid JSON object. No text before or after. No markdown.
 
-Each key is a mechanism category. Each value is an array of mechanism objects.
+Required format:
+{"primary_hypothesis": "clear testable hypothesis here", "supporting_hypotheses": ["hypothesis 1", "hypothesis 2", "hypothesis 3"], "evidence_basis": "in vitro", "knowledge_gap": "one sentence describing the gap this addresses", "suggested_experiment": "one sentence describing the key experiment"}
+
+evidence_basis must be exactly one of: in vitro, in vivo, clinical, mixed
+
+OUTPUT ONLY THE JSON OBJECT. START WITH { AND END WITH }."""
+
+READINESS_SYSTEM = """You are a biomedical research scientist. Assess experimental readiness.
+
+You MUST respond with ONLY a valid JSON object. No text before or after. No markdown.
 
 Required format:
-{"Mechanism Category": [{"mechanism": "name", "evidence_strength": 3, "cargo": "protein/RNA", "notes": "one sentence"}]}
+{"treatment": "name", "overall_readiness": 7, "solubility": "Lipid-soluble", "typical_concentration": "5-10 uM", "cell_models": ["HaCaT", "fibroblast"], "assays": ["MTT", "ELISA"], "suppliers": ["Sigma-Aldrich"], "timeline_days": 7, "blockers": ["poor solubility"], "next_step": "Order from Sigma and prepare DMSO stock."}
+
+overall_readiness: integer 0-10
+solubility: exactly one of: Water-soluble, Lipid-soluble, Both, Unknown
+timeline_days: integer (days to first data point)
+
+OUTPUT ONLY THE JSON OBJECT. START WITH { AND END WITH }."""
+
+CLUSTER_SYSTEM = """You are a biomedical research scientist. Cluster findings by mechanism or pathway.
+
+You MUST respond with ONLY a valid JSON object. No text before or after. No markdown.
+
+Each key is a mechanism/pathway name. Each value is an array of finding objects.
+
+Required format:
+{"Mechanism Name": [{"treatment": "name", "evidence_strength": 3, "notes": "one sentence"}]}
 
 evidence_strength: integer 1-5 only (1=weak, 5=strong)
 
 OUTPUT ONLY THE JSON OBJECT. START WITH { AND END WITH }."""
 
-READINESS_SYSTEM = """You are a cancer immunology lab scientist. Assess experimental readiness
-for testing CAR-NK-derived exosomes against a specific cancer target.
-
-You MUST respond with ONLY a valid JSON object. No text before or after. No markdown.
-
-Required format:
-{"target": "name", "overall_readiness": 7, "exosome_source": "NK-92 or primary NK",
- "isolation_method": "ultracentrifugation", "cancer_cell_lines": ["U87", "Raji"],
- "assays": ["cytotoxicity", "flow cytometry"], "timeline_days": 14,
- "blockers": ["CAR engineering complexity"], "next_step": "One concrete next action."}
-
-overall_readiness: integer 0-10
-timeline_days: integer
-
-OUTPUT ONLY THE JSON OBJECT. START WITH { AND END WITH }."""
-
-COMPARATOR_SYSTEM = """You are a translational cancer immunologist. Compare evidence across
-study types for CAR-NK exosome therapy.
-
-You MUST respond with ONLY a valid JSON object. No text before or after. No markdown.
-
-Required format:
-{"in_vitro": {"strength": 7, "key_findings": ["finding 1", "finding 2"], "gaps": ["gap 1"]},
- "in_vivo": {"strength": 4, "key_findings": ["finding 1"], "gaps": ["gap 1", "gap 2"]},
- "clinical": {"strength": 1, "key_findings": [], "gaps": ["gap 1", "gap 2", "gap 3"]},
- "overall_verdict": "one paragraph summary",
- "biggest_translational_gap": "one sentence"}
-
-strength: integer 0-10
-
-OUTPUT ONLY THE JSON OBJECT. START WITH { AND END WITH }."""
-
-# ─── Demo content ─────────────────────────────────────────────────────────────
-
 DEMO_QUERIES = [
-    "What cytotoxic cargo do NK cell-derived exosomes carry to kill tumor cells?",
-    "How do CAR-NK cells produce exosomes that inherit CAR targeting?",
-    "What cancer types show the best response to NK-derived exosome therapy?",
-    "Compare NK-derived exosomes vs CAR-T cells: safety and efficacy evidence.",
-    "What are the best methods to isolate and purify CAR-NK-derived exosomes?",
-    "How does perforin and granzyme packaging into NK exosomes work?",
-    "What is the evidence for NK exosomes in glioblastoma treatment?",
-    "What exosome engineering strategies improve CAR display on the surface?",
+    "What exosome engineering designs have been used in vivo to treat aging and senescence?",
+    "Which MSC-derived exosome approaches show the strongest evidence for tissue regeneration?",
+    "How are miRNA or siRNA loaded into exosomes for therapeutic delivery?",
+    "What in vitro senescence models are used to test exosome interventions?",
+    "Compare in vivo vs in vitro evidence for exosome-based anti-aging treatments.",
+    "What plant-derived exosome-like nanoparticles have therapeutic applications?",
+    "What are the key gaps in exosome engineering for clinical translation?",
+    "Which surface modification strategies improve exosome targeting in vivo?",
 ]
 
-CANCER_TARGETS = [
-    "CD19 — B-cell malignancies (ALL, CLL, lymphoma)",
-    "CD20 — Non-Hodgkin lymphoma",
-    "HER2 — Breast / gastric cancer",
-    "EGFR — Glioblastoma / lung cancer",
-    "GD2 — Neuroblastoma / glioma",
-    "BCMA — Multiple myeloma",
-    "CD33 — AML (acute myeloid leukemia)",
-    "Mesothelin — Pancreatic / ovarian / mesothelioma",
-    "PD-L1 — Solid tumors (immune checkpoint)",
-    "EpCAM — Epithelial solid tumors",
-    "CD123 — AML / BPDCN",
-    "NKG2D ligands — Pan-tumor (stress ligands)",
+APPLICATIONS = [
+    "Aging & senescence",
+    "Neurodegeneration",
+    "Cardiovascular disease",
+    "Wound healing & tissue repair",
+    "Cancer & immunotherapy",
+    "Metabolic disease",
+    "Musculoskeletal regeneration",
+    "Pulmonary disease",
+    "Renal disease",
+    "Inflammation & autoimmune",
 ]
 
-MECHANISM_CATEGORIES = [
-    "Perforin / Granzyme-mediated apoptosis",
-    "TRAIL / FasL death receptor signaling",
-    "CAR antigen-specific targeting",
-    "NKG2D / DNAM-1 activating receptor cargo",
-    "miRNA / siRNA gene silencing payload",
-    "Immune checkpoint modulation (PD-1/PD-L1)",
-    "Tumor microenvironment remodeling",
-    "Cytokine delivery (IL-15, IFN-γ)",
-]
-
-CANCER_TYPES = [
-    "Glioblastoma (GBM)",
-    "Acute Myeloid Leukemia (AML)",
-    "B-cell ALL / lymphoma",
-    "Multiple Myeloma",
-    "Breast Cancer",
-    "Lung Cancer (NSCLC)",
-    "Pancreatic Cancer",
-    "Ovarian Cancer",
-    "Neuroblastoma",
-    "Colorectal Cancer",
+MECHANISMS = [
+    "Senescence suppression / SASP regulation",
+    "Mitochondrial function & oxidative stress",
+    "mTOR / autophagy / mitophagy",
+    "Telomere maintenance",
+    "Epigenetic reprogramming",
+    "Neuroinflammation & neuroprotection",
+    "Angiogenesis & vascular repair",
+    "Immune modulation / macrophage polarization",
+    "Wnt / β-catenin signaling",
+    "NF-κB / inflammatory pathway",
 ]
 
 
@@ -279,20 +247,19 @@ def normalize_ranker_data(data) -> list:
         normalized = []
         for i, item in enumerate(data):
             if isinstance(item, dict):
-                # handle "target" or "compound" or "name" key
-                if "compound" in item and "target" not in item:
-                    item["target"] = item.pop("compound")
-                if "name" in item and "target" not in item:
-                    item["target"] = item.pop("name")
+                # normalize "compound" or "name" key to "treatment"
+                if "compound" in item and "treatment" not in item:
+                    item["treatment"] = item.pop("compound")
+                if "name" in item and "treatment" not in item:
+                    item["treatment"] = item.pop("name")
                 normalized.append(item)
             elif isinstance(item, str):
                 normalized.append({
-                    "target": item,
+                    "treatment": item,
                     "score": max(8.0 - i * 0.5, 1.0),
                     "evidence_level": "Unknown",
-                    "cancer_type": "",
                     "mechanism": "",
-                    "exosome_relevance": "",
+                    "safety_profile": "",
                     "novelty": "Unknown",
                     "summary": "",
                 })
@@ -301,18 +268,18 @@ def normalize_ranker_data(data) -> list:
         for key, val in data.items():
             if isinstance(val, list) and len(val) > 0:
                 first = val[0]
-                if isinstance(first, dict) and any(k in first for k in ["target", "compound", "name"]):
+                if isinstance(first, dict) and any(k in first for k in ["treatment", "compound", "name"]):
                     normalized = []
                     for item in val:
                         if isinstance(item, dict):
-                            if "compound" in item and "target" not in item:
-                                item["target"] = item.pop("compound")
-                            if "name" in item and "target" not in item:
-                                item["target"] = item.pop("name")
+                            if "compound" in item and "treatment" not in item:
+                                item["treatment"] = item.pop("compound")
+                            if "name" in item and "treatment" not in item:
+                                item["treatment"] = item.pop("name")
                             normalized.append(item)
                     return normalized
         values = list(data.values())
-        if values and isinstance(values[0], dict) and "target" in values[0]:
+        if values and isinstance(values[0], dict) and "treatment" in values[0]:
             return list(values)
     return []
 
@@ -338,23 +305,6 @@ def retrieve(collection, query: str, k: int) -> list:
         )
     ]
 
-def retrieve_filtered(collection, query: str, k: int, study_type: str = None) -> list:
-    """Retrieve with optional study_type filter (clinical / in_vivo / in_vitro)."""
-    where = {"study_type": study_type} if study_type else None
-    results = collection.query(
-        query_texts=[query],
-        n_results=k,
-        where=where,
-    )
-    return [
-        {"text": doc, "metadata": meta, "similarity": round(1 - dist, 4)}
-        for doc, meta, dist in zip(
-            results["documents"][0],
-            results["metadatas"][0],
-            results["distances"][0],
-        )
-    ]
-
 def build_context(chunks: list) -> str:
     parts = []
     for i, c in enumerate(chunks):
@@ -362,8 +312,6 @@ def build_context(chunks: list) -> str:
         parts.append(
             f"[Source {i+1}]\nTitle: {m['title']}\n"
             f"Authors: {m['authors']} | Year: {m['year']} | Journal: {m['journal']}\n"
-            f"Study type: {m.get('study_type','unknown')} | "
-            f"Relevance score: {m.get('relevance_score','?')}\n"
             f"PMID: {m['pmid']}\nText: {c['text']}"
         )
     return "\n\n---\n\n".join(parts)
@@ -375,50 +323,55 @@ CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600&family=DM+Mono&display=swap');
 html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
-.stApp { background: #f0f2f5; }
+.stApp { background: #f5f7fa; }
 .hero {
-    background: linear-gradient(135deg, #0a0a1a 0%, #0d1f3c 50%, #0a3d62 100%);
+    background: linear-gradient(135deg, #0d1b2a 0%, #1b2d45 50%, #1f4068 100%);
     border-radius: 16px; padding: 1.8rem 2.5rem; margin-bottom: 1.5rem; color: white;
 }
 .hero-title { font-family: 'DM Serif Display', serif; font-size: 2rem; margin: 0 0 0.2rem 0; color: #e8f4ff; }
-.hero-sub   { color: #7ec8e3; font-size: 0.9rem; margin: 0; }
+.hero-sub   { color: #90caf9; font-size: 0.9rem; margin: 0; }
 .hero-badge {
     display: inline-block; background: rgba(255,255,255,0.12);
-    border: 1px solid rgba(255,255,255,0.2); border-radius: 20px;
-    padding: 2px 10px; font-size: 0.72rem; color: #b3e0ff;
+    border: 1px solid rgba(255,255,255,0.22); border-radius: 20px;
+    padding: 2px 10px; font-size: 0.72rem; color: #bbdefb;
     margin-right: 6px; margin-top: 10px; font-family: 'DM Mono', monospace;
 }
 .stat-card {
-    background: white; border: 1px solid #e0e8f0; border-radius: 12px;
+    background: white; border: 1px solid #e3e8f0; border-radius: 12px;
     padding: 1rem; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
-.stat-num { font-family: 'DM Serif Display', serif; font-size: 1.8rem; color: #0a3d62; line-height: 1; }
+.stat-num { font-family: 'DM Serif Display', serif; font-size: 1.8rem; color: #1f4068; line-height: 1; }
 .stat-lbl { color: #888; font-size: 0.72rem; margin-top: 4px; }
 .answer-box {
-    background: white; border: 1px solid #d0e4f0; border-left: 4px solid #0a3d62;
+    background: white; border: 1px solid #dce8f5; border-left: 4px solid #1f4068;
     border-radius: 12px; padding: 1.5rem; line-height: 1.7;
 }
 .rank-card {
-    background: white; border: 1px solid #d8e8f4; border-radius: 12px;
+    background: white; border: 1px solid #dce8f5; border-radius: 12px;
     padding: 1.2rem 1.4rem; margin-bottom: 0.8rem;
     box-shadow: 0 1px 4px rgba(0,0,0,0.06);
 }
-.rank-name  { font-family: 'DM Serif Display', serif; font-size: 1.2rem; color: #0a3d62; }
+.rank-name  { font-family: 'DM Serif Display', serif; font-size: 1.2rem; color: #1f4068; }
 .score-pill {
     display: inline-block; border-radius: 20px; padding: 3px 12px;
     font-family: 'DM Mono', monospace; font-size: 0.85rem; font-weight: 700;
 }
-.score-high   { background: #e3f2fd; color: #0d47a1; }
+.score-high   { background: #e8f5e9; color: #1b5e20; }
 .score-mid    { background: #fff8e1; color: #e65100; }
 .score-low    { background: #fce4ec; color: #880e4f; }
-.mech-card {
-    background: white; border: 1px solid #c8dff0; border-left: 4px solid #1565c0;
+.hypo-card {
+    background: white; border: 1px solid #c5cae9; border-left: 4px solid #283593;
+    border-radius: 12px; padding: 1.4rem; margin-bottom: 1rem;
+}
+.primary-hypo {
+    font-family: 'DM Serif Display', serif; font-size: 1.15rem;
+    color: #1a237e; margin-bottom: 0.8rem;
+}
+.cluster-card {
+    background: white; border: 1px solid #e3f2fd; border-left: 4px solid #1565c0;
     border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 0.6rem;
 }
-.mech-title { font-weight: 600; color: #1565c0; font-size: 0.95rem; margin-bottom: 0.4rem; }
-.evidence-bar {
-    background: #e3f2fd; border-radius: 6px; height: 8px; margin-top: 6px;
-}
+.mechanism-title { font-weight: 600; color: #1565c0; font-size: 0.95rem; margin-bottom: 0.4rem; }
 .badge-claude {
     display: inline-block; background: #fff3e0; color: #e65100;
     border: 1px solid #ffcc80; border-radius: 8px; padding: 3px 10px;
@@ -429,18 +382,9 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
     border: 1px solid #a5d6a7; border-radius: 8px; padding: 3px 10px;
     font-size: 0.78rem; font-weight: 600;
 }
-.comparator-card {
-    background: white; border-radius: 12px; padding: 1.2rem 1.4rem;
-    border: 1px solid #d0e4f0; margin-bottom: 0.8rem;
-}
 .setup-box {
-    background: #e8f4fd; border: 1px solid #90caf9;
+    background: #fff8e1; border: 1px solid #ffe082;
     border-radius: 10px; padding: 1rem 1.2rem; font-size: 0.83rem;
-}
-.paradigm-box {
-    background: linear-gradient(135deg, #0d1f3c, #0a3d62);
-    border-radius: 10px; padding: 1rem 1.4rem; color: #b3e0ff;
-    font-size: 0.85rem; margin-bottom: 1rem; font-family: 'DM Mono', monospace;
 }
 </style>
 """
@@ -450,8 +394,8 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
 
 def main():
     st.set_page_config(
-        page_title="ExoRAG — CAR-NK Immunotherapy",
-        page_icon="🧬",
+        page_title="RAG Literature Search",
+        page_icon="🔬",
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -463,21 +407,10 @@ def main():
 
     # ── Sidebar ──
     with st.sidebar:
-        st.markdown("### 🧬 ExoRAG")
+        st.markdown("### 🔬 RAG Literature Search")
         st.divider()
-
-        # Paradigm reminder
-        st.markdown("""
-        <div class="paradigm-box">
-        CAR-NK → secretes → Exosomes<br>
-        ↓ harvest & purify<br>
-        Exosome → kills → Tumor cell<br>
-        <br>
-        <span style="color:#7ec8e3">Cell-free · Off-the-shelf · Low CRS risk</span>
-        </div>
-        """, unsafe_allow_html=True)
-
         st.markdown("**🤖 LLM Backend**")
+
         options = []
         if claude_ok:   options.append("🟠 Claude API  (Recommended)")
         if ollama_ok:   options.append("🟢 Ollama  (Free / Local)")
@@ -511,12 +444,13 @@ def main():
     # ── Hero ──
     st.markdown("""
     <div class="hero">
-        <p class="hero-title">🧬 ExoRAG — CAR-NK Immunotherapy Engine</p>
-        <p class="hero-sub">CAR-NK-Derived Exosomes · Cell-Free Cancer Therapy · Literature Intelligence</p>
+        <p class="hero-title">🔬 RAG Literature Search</p>
+        <p class="hero-sub">PubMed-grounded scientific intelligence · Exosome Engineering & Therapeutic Applications</p>
         <span class="hero-badge">Literature Q&A</span>
-        <span class="hero-badge">Target Ranker</span>
-        <span class="hero-badge">Mechanism Explorer</span>
-        <span class="hero-badge">Study Comparator</span>
+        <span class="hero-badge">Evidence Ranker</span>
+        <span class="hero-badge">Hypothesis Generator</span>
+        <span class="hero-badge">Mechanism Clusters</span>
+        <span class="hero-badge">Experimental Readiness</span>
     </div>""", unsafe_allow_html=True)
 
     # ── Load DB ──
@@ -525,11 +459,12 @@ def main():
         n_chunks   = collection.count()
     except Exception as e:
         st.error(f"Knowledge base not found: {e}")
-        st.info("Run:\n```\npython scripts/01_fetch_pubmed.py\npython scripts/02_build_index.py\n```")
+        st.info("Run:\n```\npython scripts/01_fetch_pubmed.py exosome_keywords.txt\npython scripts/02_build_index.py\n```")
         return
 
     llm_label = "Claude" if "Claude" in backend else ollama_sel if "Ollama" in backend else "—"
 
+    # Stats row
     for col, num, lbl in zip(
         st.columns(4),
         [f"{n_chunks:,}", f"~{n_chunks//3}", str(k_val), llm_label],
@@ -544,11 +479,11 @@ def main():
     # ── Tabs ──────────────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "💬 Literature Q&A",
-        "🎯 Target Ranker",
-        "⚙️ Mechanism Explorer",
+        "🏆 Evidence Ranker",
+        "💡 Hypothesis Generator",
+        "🧬 Mechanism Clusters",
         "🔬 Experimental Readiness",
-        "📊 Study Comparator",
-        "🗂️ Feedback Loop",
+        "📊 Feedback Loop",
     ])
 
     no_llm = "⚠️" in backend
@@ -567,21 +502,12 @@ def main():
         st.divider()
 
         query = st.text_area(
-            "Ask a research or translational question:",
+            "Ask a research question:",
             value=selected or "",
             height=80,
-            placeholder="e.g. What cytotoxic mechanisms do NK-derived exosomes carry to kill GBM cells?",
+            placeholder="e.g. What exosome engineering designs treat senescence in vivo?",
             key="qa_query",
         )
-
-        col_filter, _ = st.columns([2, 3])
-        with col_filter:
-            study_filter = st.selectbox(
-                "Filter by study type:",
-                ["All", "clinical", "in_vivo", "in_vitro", "review"],
-                key="study_filter",
-            )
-
         run_qa = st.button("🔍 Search & Analyze", type="primary", key="run_qa")
 
         if run_qa and query.strip():
@@ -589,13 +515,8 @@ def main():
                 st.error("No LLM configured — see sidebar.")
                 return
 
-            sf = None if study_filter == "All" else study_filter
-            try:
-                chunks = retrieve_filtered(collection, query.strip(), k_val, sf)
-            except Exception:
-                chunks = retrieve(collection, query.strip(), k_val)
-
-            context  = build_context(chunks)
+            chunks  = retrieve(collection, query.strip(), k_val)
+            context = build_context(chunks)
             user_msg = f"RETRIEVED LITERATURE:\n\n{context}\n\n---\n\nQUESTION: {query.strip()}"
 
             col_ans, col_src = st.columns([3, 2])
@@ -618,63 +539,56 @@ def main():
                     m    = c["metadata"]
                     sim  = c["similarity"]
                     icon = "🟢" if sim > 0.7 else "🟡" if sim > 0.5 else "🔴"
-                    study_icon = {"clinical": "🏥", "in_vivo": "🐭", "in_vitro": "🧫", "review": "📖"}.get(m.get("study_type",""), "📄")
                     with st.expander(f"{icon} [{i+1}] {m['title'][:48]}... ({m['year']})", expanded=i < 2):
                         st.markdown(f"**{m['title']}**")
                         st.markdown(f"*{m['authors']}*")
                         st.caption(f"`{m['journal']}` · {m['year']} · PMID {m['pmid']}")
-                        st.caption(f"Relevance: **{sim:.3f}** | {study_icon} {m.get('study_type','?')}")
+                        st.caption(f"Relevance: **{sim:.3f}**")
                         st.markdown(f"[PubMed ↗]({m['url']})")
                         if show_snippets:
                             st.divider()
                             st.caption(c["text"][:320] + "...")
 
     # ════════════════════════════════════════════════════════════════
-    # TAB 2 — Target Ranker
+    # TAB 2 — Evidence Ranker
     # ════════════════════════════════════════════════════════════════
     with tab2:
-        st.markdown("#### 🎯 Cancer Target Ranker")
-        st.markdown(
-            "Select a cancer type and get antigen targets ranked by evidence for "
-            "**CAR-NK-derived exosome** therapy."
-        )
+        st.markdown("#### 🏆 Evidence Ranker")
+        st.markdown("Select a disease/application and rank treatments or approaches by evidence strength, safety, and novelty.")
 
         col1, col2 = st.columns([2, 1])
         with col1:
-            cancer_type = st.selectbox("Cancer type:", CANCER_TYPES, key="rank_cancer")
+            application = st.selectbox("Target application / disease:", APPLICATIONS, key="rank_app")
         with col2:
-            top_n = st.slider("Top N targets", 3, 8, 5, key="rank_n")
+            top_n = st.slider("Top N treatments", 3, 10, 5, key="rank_n")
 
-        run_rank = st.button("🎯 Rank Targets", type="primary", key="run_rank")
+        run_rank = st.button("🏆 Rank Evidence", type="primary", key="run_rank")
 
         if run_rank:
             if no_llm:
                 st.error("No LLM configured — see sidebar.")
             else:
-                search_q = f"CAR-NK exosome {cancer_type} target antigen cytotoxicity"
+                search_q = f"exosome treatment {application} evidence efficacy in vivo in vitro"
                 chunks   = retrieve(collection, search_q, min(k_val + 4, 15))
                 context  = build_context(chunks)
 
                 user_msg = (
                     f"RETRIEVED LITERATURE:\n\n{context}\n\n---\n\n"
-                    f"Rank the top {top_n} cancer antigen targets for CAR-NK-derived exosome "
-                    f"therapy in: {cancer_type}\n"
-                    f"Focus on targets where NK exosomes carrying CAR + cytotoxic cargo "
-                    f"(perforin/granzyme/TRAIL) show evidence.\n"
-                    f"Return a JSON array with {top_n} targets ranked by overall score."
+                    f"Rank the top {top_n} exosome-based treatments or approaches for: {application}\n"
+                    f"Return a JSON array with {top_n} items ranked by overall evidence score."
                 )
 
-                with st.spinner(f"Ranking targets for {cancer_type}..."):
+                with st.spinner(f"Ranking evidence for {application}..."):
                     try:
                         raw  = call_llm(RANKER_SYSTEM, user_msg, backend, ollama_sel)
                         data = normalize_ranker_data(parse_json_response(raw))
 
                         if not data:
-                            st.warning("No targets extracted. Try reducing K or switching to Claude API.")
+                            st.warning("No treatments extracted. Try reducing K or switching to Claude API.")
                             st.code(raw[:800])
                         else:
-                            st.markdown(f"### Top {len(data)} Targets for **{cancer_type}**")
-                            st.caption(f"Based on {len(chunks)} retrieved PubMed chunks · CAR-NK exosome focus")
+                            st.markdown(f"### Top {len(data)} Approaches for **{application}**")
+                            st.caption(f"Based on {len(chunks)} retrieved PubMed chunks · Ranked by evidence + safety + novelty")
                             st.divider()
 
                         for i, item in enumerate(data):
@@ -685,13 +599,12 @@ def main():
                             st.markdown(
                                 f'<div class="rank-card">'
                                 f'<span style="font-size:1.3rem">{medal}</span> '
-                                f'<span class="rank-name"> {item.get("target","")}</span> '
+                                f'<span class="rank-name"> {item.get("treatment","")}</span> '
                                 f'<span class="score-pill {score_class}">{score:.1f}/10</span><br><br>'
-                                f'<b>Cancer type:</b> {item.get("cancer_type","")}<br>'
                                 f'<b>Mechanism:</b> {item.get("mechanism","")}<br>'
-                                f'<b>Evidence level:</b> {item.get("evidence_level","")}&nbsp;&nbsp;'
+                                f'<b>Evidence:</b> {item.get("evidence_level","")}&nbsp;&nbsp;'
                                 f'<b>Novelty:</b> {item.get("novelty","")}<br>'
-                                f'<b>Exosome relevance:</b> {item.get("exosome_relevance","")}<br><br>'
+                                f'<b>Safety:</b> {item.get("safety_profile","")}<br><br>'
                                 f'<i>{item.get("summary","")}</i>'
                                 f'</div>',
                                 unsafe_allow_html=True,
@@ -699,133 +612,202 @@ def main():
 
                     except Exception as e:
                         st.error(f"JSON parse error: {e}")
-                        st.code(raw[:1500] if raw else "Empty response.")
-                        st.info("💡 Reduce K to 3-4, or switch to Claude API.")
+                        st.markdown("**Raw LLM response:**")
+                        st.code(raw[:1500] if raw else "Empty response — try again or reduce K.")
+                        st.info("💡 Reduce K to 3-4, or switch to Claude API for reliable JSON.")
 
     # ════════════════════════════════════════════════════════════════
-    # TAB 3 — Mechanism Explorer
+    # TAB 3 — Hypothesis Generator
     # ════════════════════════════════════════════════════════════════
     with tab3:
-        st.markdown("#### ⚙️ Mechanism Explorer")
-        st.markdown(
-            "Map the cytotoxic cargo and kill mechanisms carried by NK cell-derived exosomes. "
-            "This is the core science behind using CAR-NK exosomes as therapeutic agents."
+        st.markdown("#### 💡 Hypothesis Generator")
+        st.markdown("Generate testable hypotheses grounded in PubMed literature for a treatment and disease target.")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            hypo_treatment = st.text_input(
+                "Treatment / approach:",
+                placeholder="e.g. MSC-derived exosomes, miRNA-21 loaded EVs",
+                key="hypo_treatment"
+            )
+        with col2:
+            hypo_app = st.selectbox("Disease / application:", APPLICATIONS, key="hypo_app")
+
+        evidence_type = st.radio(
+            "Evidence basis to build from:",
+            ["Best available (mixed)", "In vitro only", "In vivo only", "Clinical only"],
+            horizontal=True,
+            key="hypo_evidence",
         )
 
-        mech_target = st.selectbox("Focus on mechanism category:", MECHANISM_CATEGORIES, key="mech_target")
-        run_mech = st.button("⚙️ Explore Mechanisms", type="primary", key="run_mech")
+        run_hypo = st.button("💡 Generate Hypotheses", type="primary", key="run_hypo")
 
-        if run_mech:
+        if run_hypo and hypo_treatment.strip():
             if no_llm:
                 st.error("No LLM configured — see sidebar.")
             else:
-                search_q = f"NK exosome {mech_target} cancer cytotoxicity cargo"
+                search_q = f"{hypo_treatment} {hypo_app} exosome mechanism evidence"
+                chunks   = retrieve(collection, search_q, k_val)
+                context  = build_context(chunks)
+
+                user_msg = (
+                    f"RETRIEVED LITERATURE:\n\n{context}\n\n---\n\n"
+                    f"Treatment/approach: {hypo_treatment}\nDisease target: {hypo_app}\n"
+                    f"Evidence emphasis: {evidence_type}\n\n"
+                    f"Generate testable research hypotheses. Return only valid JSON."
+                )
+
+                with st.spinner(f"Generating hypotheses for {hypo_treatment}..."):
+                    try:
+                        raw  = call_llm(HYPOTHESIS_SYSTEM, user_msg, backend, ollama_sel)
+                        data = parse_json_response(raw)
+
+                        ev       = data.get("evidence_basis", "mixed")
+                        ev_color = {"clinical": "🟢", "in vivo": "🟡", "in vitro": "🔵", "mixed": "🟣"}.get(ev, "⚪")
+
+                        st.markdown(
+                            f'<div class="hypo-card">'
+                            f'<div class="primary-hypo">"{data.get("primary_hypothesis","")}"</div>'
+                            f'<b>Evidence basis:</b> {ev_color} {ev}<br>'
+                            f'<b>Knowledge gap addressed:</b> {data.get("knowledge_gap","")}<br>'
+                            f'<b>Suggested experiment:</b> {data.get("suggested_experiment","")}<br><br>'
+                            f'<b>Supporting hypotheses:</b>',
+                            unsafe_allow_html=True,
+                        )
+
+                        for sh in data.get("supporting_hypotheses", []):
+                            st.markdown(f"- {sh}")
+
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                        st.divider()
+                        st.markdown(f"**📄 Based on {len(chunks)} PubMed sources:**")
+                        for c in chunks[:4]:
+                            m = c["metadata"]
+                            st.caption(f"• {m['authors']} ({m['year']}) — {m['title'][:70]}... [PMID {m['pmid']}]({m['url']})")
+
+                    except Exception as e:
+                        st.error(f"JSON parse error: {e}")
+                        st.markdown("**Raw LLM response:**")
+                        st.code(raw[:1500] if raw else "Empty response — try again or reduce K.")
+                        st.info("💡 Reduce K to 3-4, or switch to Claude API for reliable JSON.")
+
+        elif run_hypo:
+            st.warning("Please enter a treatment or approach.")
+
+    # ════════════════════════════════════════════════════════════════
+    # TAB 4 — Mechanism Clusters
+    # ════════════════════════════════════════════════════════════════
+    with tab4:
+        st.markdown("#### 🧬 Mechanism Clusters")
+        st.markdown("Group exosome-based treatments by biological mechanism or pathway for a selected target.")
+
+        target = st.selectbox("Select biological target / pathway:", MECHANISMS, key="cluster_target")
+        run_cluster = st.button("🧬 Cluster by Mechanism", type="primary", key="run_cluster")
+
+        if run_cluster:
+            if no_llm:
+                st.error("No LLM configured — see sidebar.")
+            else:
+                search_q = f"exosome {target} mechanism pathway treatment"
                 chunks   = retrieve(collection, search_q, min(k_val + 4, 15))
                 context  = build_context(chunks)
 
                 user_msg = (
                     f"RETRIEVED LITERATURE:\n\n{context}\n\n---\n\n"
-                    f"Map the mechanisms for: {mech_target}\n"
-                    f"Focus specifically on what molecular cargo is packaged into NK-derived exosomes "
-                    f"and how it mediates tumor cell killing. Return JSON."
+                    f"Cluster exosome-based treatments by mechanism for target: {target}\n"
+                    f"Return JSON with mechanism names as keys."
                 )
 
-                with st.spinner(f"Mapping mechanisms for {mech_target}..."):
+                with st.spinner(f"Clustering mechanisms for {target}..."):
                     try:
-                        raw  = call_llm(MECHANISM_SYSTEM, user_msg, backend, ollama_sel)
+                        raw  = call_llm(CLUSTER_SYSTEM, user_msg, backend, ollama_sel)
                         data = parse_json_response(raw)
 
-                        st.markdown(f"### Mechanism Map: **{mech_target}**")
+                        st.markdown(f"### Mechanism Map: **{target}**")
                         st.caption(f"Based on {len(chunks)} PubMed sources")
                         st.divider()
 
-                        for category, items in data.items():
+                        for mechanism, items in data.items():
                             if not items:
                                 continue
-                            with st.expander(f"**{category}** — {len(items)} mechanism(s)", expanded=True):
+                            with st.expander(f"**{mechanism}** — {len(items)} approach(es)", expanded=True):
                                 for item in items:
                                     if isinstance(item, str):
-                                        item = {"mechanism": item, "evidence_strength": 0, "cargo": "", "notes": ""}
+                                        item = {"treatment": item, "evidence_strength": 0, "notes": ""}
                                     elif not isinstance(item, dict):
                                         continue
+                                    # normalize compound/name → treatment
+                                    if "compound" in item and "treatment" not in item:
+                                        item["treatment"] = item.pop("compound")
+                                    if "name" in item and "treatment" not in item:
+                                        item["treatment"] = item.pop("name")
                                     strength = min(max(int(item.get("evidence_strength", 0)), 0), 5)
                                     stars    = "⭐" * strength + "☆" * (5 - strength)
-                                    bar_w    = strength * 20
-
                                     st.markdown(
-                                        f'<div class="mech-card">'
-                                        f'<span class="mech-title">{item.get("mechanism","")}</span> '
+                                        f'<div class="cluster-card">'
+                                        f'<span class="mechanism-title">{item.get("treatment","")}</span> '
                                         f'<span style="font-size:0.8rem">{stars if strength > 0 else ""}</span><br>'
-                                        f'<span style="font-size:0.82rem;color:#1565c0"><b>Cargo:</b> {item.get("cargo","")}</span><br>'
-                                        f'<span style="font-size:0.82rem;color:#555">{item.get("notes","")}</span>'
-                                        f'<div class="evidence-bar"><div style="background:#1565c0;width:{bar_w}%;height:8px;border-radius:6px"></div></div>'
+                                        f'<span style="font-size:0.82rem; color:#555">{item.get("notes","")}</span>'
                                         f'</div>',
                                         unsafe_allow_html=True,
                                     )
 
                     except Exception as e:
                         st.error(f"Error: {e}")
-                        st.code(raw[:1500] if raw else "Empty response.")
-                        st.info("💡 Reduce K to 3-4, or switch to Claude API.")
+                        st.markdown("**Raw LLM response:**")
+                        st.code(raw[:1500] if raw else "Empty response — try again or reduce K.")
+                        st.info("💡 Reduce K to 3-4, or switch to Claude API for reliable JSON.")
 
     # ════════════════════════════════════════════════════════════════
-    # TAB 4 — Experimental Readiness
+    # TAB 5 — Experimental Readiness
     # ════════════════════════════════════════════════════════════════
-    with tab4:
+    with tab5:
         st.markdown("#### 🔬 Experimental Readiness")
-        st.markdown(
-            "Can we test CAR-NK-derived exosomes against this target **this week**? "
-            "Get a lab-ready protocol assessment from the literature."
-        )
+        st.markdown("Can we test this **tomorrow**? Get a lab-ready assessment from the literature.")
 
         col1, col2 = st.columns(2)
         with col1:
-            ready_target = st.selectbox("Cancer target:", CANCER_TARGETS, key="ready_target")
+            ready_treatment = st.text_input(
+                "Treatment / approach:",
+                placeholder="e.g. MSC exosomes, curcumin-loaded EVs, miRNA-146a exosomes",
+                key="ready_treatment"
+            )
         with col2:
-            ready_cancer = st.selectbox("Cancer type:", CANCER_TYPES, key="ready_cancer")
-
-        nk_source = st.radio(
-            "NK cell source:",
-            ["NK-92 cell line (easiest)", "Primary NK (PBMC-derived)", "iPSC-derived NK", "Cord blood NK"],
-            horizontal=True,
-            key="nk_source",
-        )
+            ready_app = st.selectbox("Disease / application:", APPLICATIONS, key="ready_app")
 
         run_ready = st.button("🔬 Assess Readiness", type="primary", key="run_ready")
 
-        if run_ready:
+        if run_ready and ready_treatment.strip():
             if no_llm:
                 st.error("No LLM configured — see sidebar.")
             else:
-                target_name = ready_target.split("—")[0].strip()
-                search_q = (
-                    f"CAR-NK exosome {target_name} {ready_cancer} "
-                    f"protocol isolation assay cytotoxicity"
-                )
+                search_q = f"{ready_treatment} exosome concentration cell model assay protocol {ready_app}"
                 chunks   = retrieve(collection, search_q, k_val)
                 context  = build_context(chunks)
                 user_msg = (
                     f"RETRIEVED LITERATURE:\n\n{context}\n\n---\n\n"
-                    f"Target antigen: {target_name}\n"
-                    f"Cancer type: {ready_cancer}\n"
-                    f"NK cell source: {nk_source}\n"
-                    f"Assess readiness to test CAR-NK-derived exosomes in the lab. Return only valid JSON."
+                    f"Treatment: {ready_treatment}\nApplication: {ready_app}\n"
+                    f"Assess experimental readiness for lab testing. Return only valid JSON."
                 )
-
-                with st.spinner(f"Assessing readiness for {target_name} / {ready_cancer}..."):
+                with st.spinner(f"Assessing readiness for {ready_treatment}..."):
                     try:
                         raw  = call_llm(READINESS_SYSTEM, user_msg, backend, ollama_sel)
                         data = parse_json_response(raw)
 
+                        # normalize compound → treatment
+                        if "compound" in data and "treatment" not in data:
+                            data["treatment"] = data.pop("compound")
+
                         score     = int(data.get("overall_readiness", 0))
-                        score_col = "#0d47a1" if score >= 7 else "#e65100" if score >= 4 else "#b71c1c"
+                        score_col = "#1b5e20" if score >= 7 else "#e65100" if score >= 4 else "#b71c1c"
                         bar_pct   = score * 10
 
-                        st.markdown(f"### {target_name} × {ready_cancer} — Readiness Assessment")
+                        st.markdown(f"### {data.get('treatment', ready_treatment)} — Readiness Assessment")
                         st.divider()
 
                         st.markdown(
-                            f"""<div style="background:white;border:1px solid #d0e4f0;border-radius:12px;padding:1.2rem 1.5rem;margin-bottom:1rem">
+                            f"""<div style="background:white;border:1px solid #dce8f5;border-radius:12px;padding:1.2rem 1.5rem;margin-bottom:1rem">
                             <div style="font-size:0.85rem;color:#888;margin-bottom:6px">OVERALL READINESS</div>
                             <div style="font-family:'DM Serif Display',serif;font-size:2.5rem;color:{score_col};line-height:1">{score}/10</div>
                             <div style="background:#f0f0f0;border-radius:8px;height:10px;margin-top:10px">
@@ -838,131 +820,44 @@ def main():
 
                         c1, c2, c3 = st.columns(3)
                         with c1:
-                            st.markdown("**🧫 Exosome Production**")
-                            st.markdown(f"- **NK source:** {data.get('exosome_source','')}")
-                            st.markdown(f"- **Isolation:** {data.get('isolation_method','')}")
+                            st.markdown("**🧪 Lab Properties**")
+                            st.markdown(f"- **Solubility:** {data.get('solubility','Unknown')}")
+                            st.markdown(f"- **Concentration:** {data.get('typical_concentration','Unknown')}")
                             st.markdown(f"- **Timeline:** ~{data.get('timeline_days','?')} days to first data")
                         with c2:
-                            st.markdown("**🔬 Cell Lines & Assays**")
-                            for cl in data.get("cancer_cell_lines", []):
-                                st.markdown(f"- {cl}")
+                            st.markdown("**🔬 Cell Models & Assays**")
+                            for cm in data.get("cell_models", []):
+                                st.markdown(f"- {cm}")
                             st.markdown("**Assays:**")
                             for assay in data.get("assays", []):
                                 st.markdown(f"- {assay}")
                         with c3:
-                            st.markdown("**⚠️ Potential Blockers**")
-                            for b in data.get("blockers", []):
-                                st.markdown(f"- {b}")
+                            st.markdown("**🛒 Suppliers**")
+                            for s in data.get("suppliers", []):
+                                st.markdown(f"- {s}")
+                            if data.get("blockers"):
+                                st.markdown("**⚠️ Potential blockers:**")
+                                for b in data.get("blockers", []):
+                                    st.markdown(f"- {b}")
 
                         st.divider()
                         st.caption(f"Based on {len(chunks)} PubMed sources")
 
                     except Exception as e:
                         st.error(f"JSON parse error: {e}")
-                        st.code(raw[:1500] if raw else "Empty response.")
-                        st.info("💡 Reduce K to 3-4, or switch to Claude API.")
+                        st.markdown("**Raw LLM response:**")
+                        st.code(raw[:1500] if raw else "Empty response — try again or reduce K.")
+                        st.info("💡 Reduce K to 3-4, or switch to Claude API for reliable JSON.")
 
-    # ════════════════════════════════════════════════════════════════
-    # TAB 5 — Study Comparator
-    # ════════════════════════════════════════════════════════════════
-    with tab5:
-        st.markdown("#### 📊 Study Comparator")
-        st.markdown(
-            "Compare the strength of evidence across **in vitro → in vivo → clinical** "
-            "for a given CAR-NK exosome + cancer combination. Identify translational gaps."
-        )
-
-        col1, col2 = st.columns(2)
-        with col1:
-            comp_cancer = st.selectbox("Cancer type:", CANCER_TYPES, key="comp_cancer")
-        with col2:
-            comp_target = st.text_input(
-                "Antigen target (optional):",
-                placeholder="e.g. CD19, HER2, GD2",
-                key="comp_target",
-            )
-
-        run_comp = st.button("📊 Compare Evidence", type="primary", key="run_comp")
-
-        if run_comp:
-            if no_llm:
-                st.error("No LLM configured — see sidebar.")
-            else:
-                target_str = f"{comp_target} " if comp_target.strip() else ""
-                search_q   = f"CAR-NK NK exosome {target_str}{comp_cancer} clinical vivo vitro"
-                chunks     = retrieve(collection, search_q, min(k_val + 4, 15))
-                context    = build_context(chunks)
-
-                user_msg = (
-                    f"RETRIEVED LITERATURE:\n\n{context}\n\n---\n\n"
-                    f"Cancer: {comp_cancer}\n"
-                    f"Target: {comp_target or 'any'}\n"
-                    f"Compare the evidence across in vitro, in vivo, and clinical studies "
-                    f"for CAR-NK-derived exosome therapy. Identify the biggest translational gap. "
-                    f"Return only valid JSON."
-                )
-
-                with st.spinner(f"Comparing evidence for {comp_cancer}..."):
-                    try:
-                        raw  = call_llm(COMPARATOR_SYSTEM, user_msg, backend, ollama_sel)
-                        data = parse_json_response(raw)
-
-                        st.markdown(f"### Evidence Comparison: **{comp_cancer}** {('· ' + comp_target) if comp_target else ''}")
-                        st.caption(f"Based on {len(chunks)} PubMed sources")
-                        st.divider()
-
-                        # Evidence strength bars
-                        cols = st.columns(3)
-                        for col, key, label, icon in [
-                            (cols[0], "in_vitro",  "In Vitro",  "🧫"),
-                            (cols[1], "in_vivo",   "In Vivo",   "🐭"),
-                            (cols[2], "clinical",  "Clinical",  "🏥"),
-                        ]:
-                            section  = data.get(key, {})
-                            strength = int(section.get("strength", 0))
-                            bar_col  = "#0d47a1" if strength >= 7 else "#e65100" if strength >= 4 else "#b71c1c"
-                            with col:
-                                st.markdown(
-                                    f'<div class="comparator-card">'
-                                    f'<div style="font-size:1.2rem">{icon} <b>{label}</b></div>'
-                                    f'<div style="font-family:DM Mono;font-size:1.8rem;color:{bar_col}">{strength}/10</div>'
-                                    f'<div style="background:#f0f0f0;border-radius:6px;height:8px;margin:8px 0">'
-                                    f'<div style="background:{bar_col};width:{strength*10}%;height:8px;border-radius:6px"></div></div>'
-                                    f'</div>',
-                                    unsafe_allow_html=True,
-                                )
-                                if section.get("key_findings"):
-                                    st.markdown("**Key findings:**")
-                                    for f in section["key_findings"]:
-                                        st.markdown(f"✅ {f}")
-                                if section.get("gaps"):
-                                    st.markdown("**Gaps:**")
-                                    for g in section["gaps"]:
-                                        st.markdown(f"⚠️ {g}")
-
-                        st.divider()
-                        st.markdown("### 🔍 Overall Verdict")
-                        st.markdown(
-                            f'<div class="answer-box">{data.get("overall_verdict","")}</div>',
-                            unsafe_allow_html=True,
-                        )
-                        if data.get("biggest_translational_gap"):
-                            st.error(f"**Biggest translational gap:** {data['biggest_translational_gap']}")
-
-                    except Exception as e:
-                        st.error(f"JSON parse error: {e}")
-                        st.code(raw[:1500] if raw else "Empty response.")
-                        st.info("💡 Reduce K to 3-4, or switch to Claude API.")
+        elif run_ready:
+            st.warning("Please enter a treatment or approach.")
 
     # ════════════════════════════════════════════════════════════════
     # TAB 6 — Feedback Loop
     # ════════════════════════════════════════════════════════════════
     with tab6:
-        st.markdown("#### 🗂️ Feedback Loop — Internal Experiment Log")
-        st.markdown(
-            "Log your CAR-NK exosome lab results. Over time this builds "
-            "**proprietary knowledge** no published paper has."
-        )
+        st.markdown("#### 📊 Feedback Loop — Internal Research Intelligence")
+        st.markdown("Log your experimental results. Over time this builds **proprietary knowledge** no one else has.")
 
         FEEDBACK_FILE = Path(os.getenv("OUTPUT_DIR", "./outputs")) / "feedback_log.json"
         FEEDBACK_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -978,71 +873,66 @@ def main():
         def save_feedback(records):
             FEEDBACK_FILE.write_text(json.dumps(records, indent=2))
 
-        st.markdown("### ➕ Log a New Experiment")
+        st.markdown("### ➕ Log a New Result")
         col1, col2, col3 = st.columns(3)
         with col1:
-            fb_target   = st.text_input("Cancer target / antigen:", key="fb_target",
-                                         placeholder="e.g. CD19, HER2, GD2")
-            fb_cancer   = st.selectbox("Cancer type:", CANCER_TYPES, key="fb_cancer")
+            fb_treatment = st.text_input("Treatment / approach:", key="fb_treatment",
+                                          placeholder="e.g. MSC exosomes, miRNA-21 EVs")
+            fb_app       = st.selectbox("Application:", APPLICATIONS, key="fb_app")
         with col2:
-            fb_nk_src   = st.text_input("NK cell source:", key="fb_nk_src",
-                                         placeholder="e.g. NK-92, primary PBMC")
-            fb_method   = st.text_input("Exosome isolation method:", key="fb_method",
-                                         placeholder="e.g. ultracentrifugation, SEC")
+            fb_model     = st.text_input("Model system:", key="fb_model",
+                                          placeholder="e.g. IMR90 senescent cells, aged C57BL/6")
+            fb_conc      = st.text_input("Dose / concentration:", key="fb_conc",
+                                          placeholder="e.g. 1×10⁹ particles/mL, 5µg/mL")
         with col3:
-            fb_result   = st.radio("Result:", ["✅ Cytotoxicity observed", "⚠️ Partial", "❌ No effect"],
-                                    key="fb_result")
-            fb_score    = st.slider("Efficacy score:", 0, 10, 5, key="fb_score")
+            fb_result    = st.radio("Result:", ["✅ Worked", "⚠️ Partial", "❌ Failed"], key="fb_result")
+            fb_score     = st.slider("Efficacy score (your judgment):", 0, 10, 5, key="fb_score")
 
-        fb_assay = st.text_input("Assay used:", key="fb_assay",
-                                  placeholder="e.g. LDH release, flow cytometry, CytoTox-Glo")
         fb_notes = st.text_area("Notes / observations:", height=80, key="fb_notes",
-                                 placeholder="e.g. 40% cytotoxicity at 50µg/mL exosome dose, "
-                                             "abolished by anti-TRAIL blocking antibody")
+                                 placeholder="e.g. Reduced p21 expression 40%, improved viability, no effect on SASP markers")
         fb_date  = st.date_input("Date:", key="fb_date")
 
-        if st.button("💾 Save Experiment", type="primary", key="save_fb"):
-            if fb_target.strip():
+        if st.button("💾 Save Result", type="primary", key="save_fb"):
+            if fb_treatment.strip():
                 records = load_feedback()
                 records.append({
-                    "id":               len(records) + 1,
-                    "target":           fb_target.strip(),
-                    "cancer_type":      fb_cancer,
-                    "nk_source":        fb_nk_src,
-                    "isolation_method": fb_method,
-                    "assay":            fb_assay,
-                    "result":           fb_result,
-                    "score":            fb_score,
-                    "notes":            fb_notes,
-                    "date":             str(fb_date),
-                    "logged_at":        datetime.now().isoformat(),
+                    "id":           len(records) + 1,
+                    "treatment":    fb_treatment.strip(),
+                    "application":  fb_app,
+                    "model_system": fb_model,
+                    "dose":         fb_conc,
+                    "result":       fb_result,
+                    "score":        fb_score,
+                    "notes":        fb_notes,
+                    "date":         str(fb_date),
+                    "logged_at":    datetime.now().isoformat(),
                 })
                 save_feedback(records)
-                st.success(f"✅ Saved experiment: {fb_target} × {fb_cancer}")
+                st.success(f"✅ Saved result for **{fb_treatment}**")
                 st.rerun()
             else:
-                st.warning("Please enter a cancer target.")
+                st.warning("Please enter a treatment or approach.")
 
         st.divider()
 
         records = load_feedback()
 
         if not records:
-            st.info("No experiments logged yet. Start logging your lab results above.")
+            st.info("No results logged yet. Start logging your experiments above to build your internal knowledge base.")
         else:
-            st.markdown(f"### 📋 Experiment Log ({len(records)} entries)")
+            st.markdown(f"### 📋 Internal Results Database ({len(records)} entries)")
 
-            worked   = sum(1 for r in records if "Cytotoxicity" in r.get("result",""))
-            partial  = sum(1 for r in records if "Partial" in r.get("result",""))
-            failed   = sum(1 for r in records if "No effect" in r.get("result",""))
+            worked    = sum(1 for r in records if "Worked"  in r.get("result",""))
+            partial   = sum(1 for r in records if "Partial" in r.get("result",""))
+            failed    = sum(1 for r in records if "Failed"  in r.get("result",""))
             avg_score = sum(r.get("score",0) for r in records) / len(records) if records else 0
 
             s1, s2, s3, s4 = st.columns(4)
             for col, num, lbl, color in [
-                (s1, worked,           "✅ Cytotoxic",  "#0d47a1"),
-                (s2, partial,          "⚠️ Partial",    "#e65100"),
-                (s3, failed,           "❌ No Effect",  "#b71c1c"),
-                (s4, f"{avg_score:.1f}/10", "Avg Score", "#0a3d62"),
+                (s1, worked,               "✅ Worked",  "#1b5e20"),
+                (s2, partial,              "⚠️ Partial", "#e65100"),
+                (s3, failed,               "❌ Failed",  "#b71c1c"),
+                (s4, f"{avg_score:.1f}/10","Avg Score",  "#1f4068"),
             ]:
                 col.markdown(
                     f'<div class="stat-card"><div class="stat-num" style="color:{color}">{num}</div>'
@@ -1054,72 +944,73 @@ def main():
 
             filter_result = st.multiselect(
                 "Filter by result:",
-                ["✅ Cytotoxicity observed", "⚠️ Partial", "❌ No effect"],
-                default=["✅ Cytotoxicity observed", "⚠️ Partial", "❌ No effect"],
+                ["✅ Worked", "⚠️ Partial", "❌ Failed"],
+                default=["✅ Worked", "⚠️ Partial", "❌ Failed"],
                 key="fb_filter",
             )
             filtered = [r for r in records if r.get("result","") in filter_result]
 
             for r in reversed(filtered):
-                result_color  = {"✅ Cytotoxicity observed": "#e3f2fd", "⚠️ Partial": "#fff8e1", "❌ No effect": "#fce4ec"}.get(r.get("result",""), "white")
-                border_color  = {"✅ Cytotoxicity observed": "#0d47a1", "⚠️ Partial": "#e65100", "❌ No effect": "#c62828"}.get(r.get("result",""), "#ccc")
+                result_color  = {"✅ Worked": "#e8f5e9", "⚠️ Partial": "#fff8e1", "❌ Failed": "#fce4ec"}.get(r.get("result",""), "white")
+                border_color  = {"✅ Worked": "#2e7d32", "⚠️ Partial": "#e65100", "❌ Failed": "#c62828"}.get(r.get("result",""), "#ccc")
 
                 with st.expander(
-                    f"{r.get('result','')} **{r.get('target','')}** × {r.get('cancer_type','')} "
+                    f"{r.get('result','')} **{r.get('treatment','')}** — {r.get('application','')} "
                     f"| Score: {r.get('score','')}/10 | {r.get('date','')}",
                     expanded=False,
                 ):
+                    st.markdown(
+                        f'<div style="background:{result_color};border-left:4px solid {border_color};'
+                        f'border-radius:8px;padding:1rem">',
+                        unsafe_allow_html=True,
+                    )
                     c1, c2 = st.columns(2)
                     with c1:
-                        st.markdown(f"**Target:** {r.get('target','')}")
-                        st.markdown(f"**Cancer:** {r.get('cancer_type','')}")
-                        st.markdown(f"**NK source:** {r.get('nk_source','')}")
-                        st.markdown(f"**Isolation:** {r.get('isolation_method','')}")
+                        st.markdown(f"**Treatment:** {r.get('treatment','')}")
+                        st.markdown(f"**Application:** {r.get('application','')}")
+                        st.markdown(f"**Model system:** {r.get('model_system','')}")
+                        st.markdown(f"**Dose:** {r.get('dose','')}")
                     with c2:
-                        st.markdown(f"**Assay:** {r.get('assay','')}")
                         st.markdown(f"**Result:** {r.get('result','')}")
-                        st.markdown(f"**Score:** {r.get('score','')}/10")
+                        st.markdown(f"**Efficacy score:** {r.get('score','')}/10")
                         st.markdown(f"**Date:** {r.get('date','')}")
                     if r.get("notes"):
                         st.markdown(f"**Notes:** {r.get('notes','')}")
+                    st.markdown("</div>", unsafe_allow_html=True)
 
             st.divider()
 
-            # AI synthesis
             if len(records) >= 3 and not no_llm:
-                st.markdown("### 🤖 AI Synthesis of Internal Results")
-                st.caption("Combines your experiment log with PubMed for proprietary insights")
+                st.markdown("### 🤖 AI Synthesis of Your Internal Results")
+                st.caption("Combines your experimental data with PubMed literature for proprietary insights")
 
-                if st.button("🧠 Synthesize Intelligence", key="synthesize"):
+                if st.button("🧠 Synthesize Internal Intelligence", key="synthesize"):
                     summary_data = [
-                        {k: r.get(k,"") for k in ["target","cancer_type","nk_source","result","score","assay","notes"]}
+                        {k: r[k] for k in ["treatment","application","result","score","notes","model_system"] if k in r}
                         for r in records
                     ]
-                    search_q = " ".join(set(
-                        f"{r.get('target','')} {r.get('cancer_type','')}" for r in records[:5]
-                    ))
-                    chunks   = retrieve(collection, search_q + " CAR-NK exosome", min(k_val, 8))
-                    context  = build_context(chunks)
+                    search_q  = " ".join(set(r["treatment"] for r in records[:5]))
+                    chunks    = retrieve(collection, search_q + " exosome therapeutic", min(k_val, 8))
+                    context   = build_context(chunks)
 
-                    synthesis_prompt = f"""You are analyzing PROPRIETARY internal CAR-NK exosome lab results
-combined with published literature.
+                    synthesis_prompt = f"""You are analyzing PROPRIETARY internal experimental results combined with published literature.
 
-INTERNAL EXPERIMENT LOG:
+INTERNAL EXPERIMENTAL RESULTS:
 {json.dumps(summary_data, indent=2)}
 
 PUBLISHED LITERATURE CONTEXT:
 {context}
 
 Provide a strategic synthesis covering:
-1. Which cancer targets / NK sources are working vs failing internally vs what literature predicts
+1. Which treatments are working vs failing internally vs what literature predicts
 2. Surprising discrepancies between your results and published data
 3. Top 3 actionable recommendations based on BOTH internal results AND literature
-4. Which target/cancer combinations to prioritize next
-5. Any patterns in what drives cytotoxicity (NK source, isolation method, assay, dose)
+4. Treatments worth prioritizing for next experiments
+5. Patterns in what works (model system, dose, application type)
 
-Be specific. Use the actual targets, cancer types, and scores from the internal data."""
+Be specific and use the actual treatment names and scores from the internal data."""
 
-                    with st.spinner("Synthesizing your data with PubMed..."):
+                    with st.spinner("Synthesizing internal data with PubMed literature..."):
                         placeholder = st.empty()
                         full_text   = ""
                         for token in stream_response(backend, ollama_sel, RAG_SYSTEM, synthesis_prompt):
@@ -1133,7 +1024,7 @@ Be specific. Use the actual targets, cancer types, and scores from the internal 
                             unsafe_allow_html=True,
                         )
             elif len(records) < 3:
-                st.info(f"Log at least 3 experiments to unlock AI synthesis. ({len(records)}/3 logged)")
+                st.info(f"Log at least 3 results to unlock AI synthesis. ({len(records)}/3 logged)")
 
             st.divider()
             if st.button("⬇️ Export to JSON", key="export_fb"):
