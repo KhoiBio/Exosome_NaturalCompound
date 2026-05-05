@@ -2,28 +2,29 @@
 """
 01_fetch_pubmed.py
 ==================
-Fetches PubMed abstracts focused on:
-  - CAR-NK-derived exosomes as therapeutic agents (primary focus)
-  - NK cell-derived extracellular vesicles for cancer killing
-  - CAR-T cell therapy & exosomes
-  - Exosome-mediated cancer immunotherapy
-  - Exosome engineering, loading, and targeting
-
-Core hypothesis: CAR-NK cells produce exosomes that inherit CAR targeting
-and NK cytotoxic cargo (perforin, granzyme, TRAIL, NKG2D) → cell-free
-immunotherapy with reduced toxicity and off-the-shelf potential.
-
-Saves results to: data/abstracts.json
-No API key required — uses NCBI Entrez (free).
+Fetches PubMed abstracts focused on exosome / extracellular vesicle biology,
+with condition terms loaded from a plain-text file (comma-separated).
 
 Usage:
-    python scripts/01_fetch_pubmed.py
+    python 01_fetch_pubmed.py conditions.txt
+
+conditions.txt example:
+    aging, senescence, anti-aging, rejuvenation, SASP, inflammaging,
+    neurodegeneration, Alzheimer's, wound healing, cancer, fibrosis
+
+How it works:
+    - Each keyword in the text file becomes its own labeled search batch:
+        (exosome OR "extracellular vesicle" OR sEV ...) AND ("<keyword>")
+    - Results are deduplicated by PMID, scored, and saved to data/abstracts.json.
+
+No API key required — uses NCBI Entrez (free, 3 req/sec max).
 """
 
 import os
+import sys
 import json
 import time
-import sys
+import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -38,409 +39,60 @@ load_dotenv()
 Entrez.email = os.getenv("ENTREZ_EMAIL", "researcher@email.com")
 OUTPUT_FILE  = Path(os.getenv("DATA_DIR", "./data")) / "abstracts.json"
 DELAY        = 0.4    # seconds between requests (NCBI allows 3/sec)
+MAX_PER_TERM = 150    # default max results per condition keyword
 
-# ─── Search Queries ───────────────────────────────────────────────────────────
-# Organized by topic: CAR-NK, CAR-T, exosome cancer immunotherapy
+# ─── Exosome/EV identity — always the left side of every AND query ────────────
 
-QUERIES = [
+EV_CORE = (
+    '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract] '
+    'OR "small EV"[Title/Abstract] OR sEV[Title/Abstract] '
+    'OR microvesicle[Title/Abstract] OR exomere[Title/Abstract] '
+    'OR nanovesicle[Title/Abstract] OR "exosome-mimetic"[Title/Abstract] '
+    'OR "biomimetic nanoparticle"[Title/Abstract] '
+    'OR "plant-derived exosome"[Title/Abstract] '
+    'OR "plant-derived nanoparticle"[Title/Abstract])'
+)
 
-    # ── CAR-NK-DERIVED EXOSOME AS THERAPEUTIC AGENT (primary focus) ──────
-    # These capture the specific paradigm: CAR-NK cells PRODUCE exosomes
-    # that are harvested and used as the drug — cell-free immunotherapy.
-    {
-        "label": "car_nk_derived_exosome_therapeutic",
-        "query": (
-            '("CAR-NK"[Title/Abstract] OR "CAR NK"[Title/Abstract] OR '
-            '"chimeric antigen receptor natural killer"[Title/Abstract]) '
-            'AND ("derived exosome"[Title/Abstract] OR "secreted exosome"[Title/Abstract] OR '
-            '"produced exosome"[Title/Abstract] OR "cell-derived extracellular vesicle"[Title/Abstract] OR '
-            '"exosome secretion"[Title/Abstract] OR "exosome release"[Title/Abstract])'
-        ),
-        "max": 200,
-    },
-    {
-        "label": "car_nk_exosome_cell_free",
-        "query": (
-            '("CAR-NK"[Title/Abstract] OR "CAR NK"[Title/Abstract]) '
-            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("cell-free"[Title/Abstract] OR "acellular"[Title/Abstract] OR '
-            '"off-the-shelf"[Title/Abstract] OR "allogeneic"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "nk_exosome_car_display",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("CAR"[Title/Abstract] OR "chimeric antigen receptor"[Title/Abstract]) '
-            'AND ("surface display"[Title/Abstract] OR "membrane display"[Title/Abstract] OR '
-            '"expressing"[Title/Abstract] OR "decorated"[Title/Abstract] OR '
-            '"functionalized"[Title/Abstract] OR "armed"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "nk_exosome_cytotoxic_cargo",
-        "query": (
-            '("NK cell"[Title/Abstract] OR "natural killer"[Title/Abstract]) '
-            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("perforin"[Title/Abstract] OR "granzyme"[Title/Abstract] OR '
-            '"TRAIL"[Title/Abstract] OR "FasL"[Title/Abstract] OR '
-            '"NKG2D"[Title/Abstract] OR "cytotoxic"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "immune_cell_exosome_therapeutic",
-        "query": (
-            '("immune cell-derived exosome"[Title/Abstract] OR '
-            '"T cell-derived exosome"[Title/Abstract] OR '
-            '"NK cell-derived exosome"[Title/Abstract] OR '
-            '"macrophage-derived exosome"[Title/Abstract] OR '
-            '"dendritic cell-derived exosome"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract] OR '
-            '"antitumor"[Title/Abstract] OR "anti-tumor"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "exosome_car_antigen_targeting",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("CD19"[Title/Abstract] OR "CD20"[Title/Abstract] OR '
-            '"CD33"[Title/Abstract] OR "HER2"[Title/Abstract] OR '
-            '"EGFR"[Title/Abstract] OR "EpCAM"[Title/Abstract] OR '
-            '"mesothelin"[Title/Abstract] OR "GD2"[Title/Abstract] OR '
-            '"CD123"[Title/Abstract] OR "BCMA"[Title/Abstract]) '
-            'AND ("natural killer"[Title/Abstract] OR "NK"[Title/Abstract] OR '
-            '"CAR"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "exosome_vs_cell_therapy_comparison",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("cell therapy"[Title/Abstract] OR "adoptive therapy"[Title/Abstract]) '
-            'AND ("alternative"[Title/Abstract] OR "superior"[Title/Abstract] OR '
-            '"advantage"[Title/Abstract] OR "compared"[Title/Abstract] OR '
-            '"cytokine release syndrome"[Title/Abstract] OR "CRS"[Title/Abstract] OR '
-            '"neurotoxicity"[Title/Abstract] OR "ICANS"[Title/Abstract])'
-        ),
-        "max": 100,
-    },
+# ─── Entity / scoring metadata ────────────────────────────────────────────────
 
-    # ── CAR-NK + Exosome ──────────────────────────────────────────────────
-    {
-        "label": "car_nk_exosome_core",
-        "query": (
-            '("CAR-NK"[Title/Abstract] OR "chimeric antigen receptor NK"[Title/Abstract] '
-            'OR "CAR NK cell"[Title/Abstract]) '
-            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract] '
-            'OR "nanoparticle"[Title/Abstract])'
-        ),
-        "max": 200,
-    },
-    {
-        "label": "car_nk_cancer_therapy",
-        "query": (
-            '("CAR-NK"[Title/Abstract] OR "chimeric antigen receptor NK"[Title/Abstract] '
-            'OR "CAR NK"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract] OR oncology[Title/Abstract] '
-            'OR leukemia[Title/Abstract] OR lymphoma[Title/Abstract] OR glioma[Title/Abstract] '
-            'OR "solid tumor"[Title/Abstract])'
-        ),
-        "max": 200,
-    },
-    {
-        "label": "nk_cell_derived_exosome",
-        "query": (
-            '("NK cell-derived exosome"[Title/Abstract] OR '
-            '"NK-derived extracellular vesicle"[Title/Abstract] OR '
-            '"natural killer cell exosome"[Title/Abstract] OR '
-            '"NK cell exosome"[Title/Abstract] OR '
-            '"NK-derived nanovesicle"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "nk_cell_exosome_cytotoxicity",
-        "query": (
-            '("natural killer"[Title/Abstract] OR "NK cell"[Title/Abstract]) '
-            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND (cytotoxic[Title/Abstract] OR "tumor killing"[Title/Abstract] OR '
-            '"anti-tumor"[Title/Abstract] OR "antitumor"[Title/Abstract] OR '
-            '"cancer"[Title/Abstract])'
-        ),
-        "max": 200,
-    },
-    {
-        "label": "car_nk_engineering",
-        "query": (
-            '("CAR-NK"[Title/Abstract] OR "CAR NK"[Title/Abstract]) '
-            'AND ("engineering"[Title/Abstract] OR "design"[Title/Abstract] OR '
-            '"manufacture"[Title/Abstract] OR "expansion"[Title/Abstract] OR '
-            '"iPSC"[Title/Abstract] OR "cord blood"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-
-    # ── CAR-T + Exosome ───────────────────────────────────────────────────
-    {
-        "label": "car_t_exosome_core",
-        "query": (
-            '("CAR-T"[Title/Abstract] OR "CAR T cell"[Title/Abstract] OR '
-            '"chimeric antigen receptor T"[Title/Abstract]) '
-            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract])'
-        ),
-        "max": 200,
-    },
-    {
-        "label": "car_t_exosome_cancer",
-        "query": (
-            '("CAR-T"[Title/Abstract] OR "CAR T"[Title/Abstract]) '
-            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract] OR '
-            'leukemia[Title/Abstract] OR lymphoma[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "car_t_exosome_delivery",
-        "query": (
-            '("CAR-T"[Title/Abstract] OR "CAR T cell"[Title/Abstract]) '
-            'AND (exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("drug delivery"[Title/Abstract] OR "payload"[Title/Abstract] OR '
-            '"cargo"[Title/Abstract] OR "loading"[Title/Abstract])'
-        ),
-        "max": 100,
-    },
-
-    # ── Exosome Cancer Immunotherapy (Broad) ──────────────────────────────
-    {
-        "label": "exosome_cancer_immunotherapy",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND (immunotherapy[Title/Abstract] OR "immune checkpoint"[Title/Abstract] OR '
-            '"PD-1"[Title/Abstract] OR "PD-L1"[Title/Abstract] OR '
-            '"checkpoint blockade"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract])'
-        ),
-        "max": 200,
-    },
-    {
-        "label": "exosome_tumor_microenvironment",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("tumor microenvironment"[Title/Abstract] OR "TME"[Title/Abstract]) '
-            'AND (immunotherapy[Title/Abstract] OR "immune evasion"[Title/Abstract] OR '
-            '"immune suppression"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "exosome_cancer_drug_delivery",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("drug delivery"[Title/Abstract] OR "targeted delivery"[Title/Abstract] OR '
-            '"nanocarrier"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract] OR oncology[Title/Abstract])'
-        ),
-        "max": 200,
-    },
-    {
-        "label": "engineered_exosome_cancer",
-        "query": (
-            '("engineered exosome"[Title/Abstract] OR "modified exosome"[Title/Abstract] OR '
-            '"functionalized exosome"[Title/Abstract] OR '
-            '"surface-engineered extracellular vesicle"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-
-    # ── NK Cell Biology + Cancer ───────────────────────────────────────────
-    {
-        "label": "nk_cell_cancer_therapy",
-        "query": (
-            '("natural killer cell"[Title/Abstract] OR "NK cell"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract]) '
-            'AND ("adoptive therapy"[Title/Abstract] OR "immunotherapy"[Title/Abstract] OR '
-            '"cell therapy"[Title/Abstract])'
-        ),
-        "max": 200,
-    },
-    {
-        "label": "nk_cell_solid_tumor",
-        "query": (
-            '("natural killer cell"[Title/Abstract] OR "NK cell"[Title/Abstract] OR '
-            '"CAR-NK"[Title/Abstract]) '
-            'AND "solid tumor"[Title/Abstract]'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "nk_cell_glioblastoma",
-        "query": (
-            '("natural killer cell"[Title/Abstract] OR "NK cell"[Title/Abstract] OR '
-            '"CAR-NK"[Title/Abstract]) '
-            'AND (glioblastoma[Title/Abstract] OR "GBM"[Title/Abstract] OR '
-            '"glioma"[Title/Abstract] OR "brain tumor"[Title/Abstract])'
-        ),
-        "max": 100,
-    },
-    {
-        "label": "nk_cell_hematologic_malignancy",
-        "query": (
-            '("natural killer cell"[Title/Abstract] OR "NK cell"[Title/Abstract] OR '
-            '"CAR-NK"[Title/Abstract]) '
-            'AND (leukemia[Title/Abstract] OR lymphoma[Title/Abstract] OR '
-            '"AML"[Title/Abstract] OR "ALL"[Title/Abstract] OR "CLL"[Title/Abstract] OR '
-            '"multiple myeloma"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-
-    # ── Exosome + Specific Cancers ─────────────────────────────────────────
-    {
-        "label": "exosome_glioblastoma",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND (glioblastoma[Title/Abstract] OR "GBM"[Title/Abstract] OR '
-            '"glioma"[Title/Abstract] OR "brain tumor"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "exosome_breast_lung_cancer",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("breast cancer"[Title/Abstract] OR "lung cancer"[Title/Abstract] OR '
-            '"NSCLC"[Title/Abstract] OR "triple negative"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "exosome_leukemia_lymphoma",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND (leukemia[Title/Abstract] OR lymphoma[Title/Abstract] OR '
-            '"AML"[Title/Abstract] OR "multiple myeloma"[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-
-    # ── Exosome Biomarkers + Cancer Diagnosis ─────────────────────────────
-    {
-        "label": "exosome_cancer_biomarker",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("biomarker"[Title/Abstract] OR "liquid biopsy"[Title/Abstract] OR '
-            '"circulating"[Title/Abstract] OR "diagnosis"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-
-    # ── Exosome Cargo + Immune Modulation ─────────────────────────────────
-    {
-        "label": "exosome_mirna_cancer",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("miRNA"[Title/Abstract] OR "microRNA"[Title/Abstract] OR '
-            '"siRNA"[Title/Abstract] OR "lncRNA"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract])'
-        ),
-        "max": 150,
-    },
-    {
-        "label": "exosome_perforin_granzyme",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("perforin"[Title/Abstract] OR "granzyme"[Title/Abstract] OR '
-            '"FasL"[Title/Abstract] OR "TRAIL"[Title/Abstract] OR '
-            '"NKG2D"[Title/Abstract] OR "DNAM-1"[Title/Abstract])'
-        ),
-        "max": 100,
-    },
-
-    # ── Clinical Trials + Manufacturing ───────────────────────────────────
-    {
-        "label": "car_nk_clinical_trial",
-        "query": (
-            '("CAR-NK"[Title/Abstract] OR "CAR NK"[Title/Abstract]) '
-            'AND ("clinical trial"[Title/Abstract] OR "phase I"[Title/Abstract] OR '
-            '"phase II"[Title/Abstract] OR "GMP"[Title/Abstract] OR '
-            '"clinical study"[Title/Abstract])'
-        ),
-        "max": 100,
-    },
-    {
-        "label": "exosome_clinical_cancer",
-        "query": (
-            '(exosome[Title/Abstract] OR "extracellular vesicle"[Title/Abstract]) '
-            'AND ("clinical trial"[Title/Abstract] OR "phase I"[Title/Abstract] OR '
-            '"phase II"[Title/Abstract] OR "clinical study"[Title/Abstract]) '
-            'AND (cancer[Title/Abstract] OR tumor[Title/Abstract])'
-        ),
-        "max": 100,
-    },
+COMPOUND_KEYWORDS = [
+    "curcumin", "quercetin", "resveratrol", "egcg", "epigallocatechin",
+    "vitamin c", "ascorbic acid", "niacinamide", "retinol", "kojic acid",
+    "luteolin", "berberine", "glycyrrhizin", "lycopene", "ginger", "gingerol",
+    "shogaol", "aloe vera", "ceramide", "hyaluronic acid", "collagen peptide",
+    "naringenin", "apigenin", "fisetin", "sulforaphane", "piperine", "honokiol",
+    "andrographolide", "ginsenoside", "green tea",
 ]
 
-
-# ─── Entity Extraction ────────────────────────────────────────────────────────
-
-IMMUNOTHERAPY_KEYWORDS = [
-    "CAR-NK", "CAR-T", "chimeric antigen receptor", "natural killer",
-    "adoptive cell therapy", "checkpoint inhibitor", "PD-1", "PD-L1",
-    "CTLA-4", "immune checkpoint", "bispecific", "NK cell",
-    "T cell", "cytokine", "IL-15", "IL-2", "interferon",
-]
-
-CANCER_KEYWORDS = [
-    "glioblastoma", "GBM", "glioma", "leukemia", "lymphoma", "AML", "ALL",
-    "breast cancer", "lung cancer", "NSCLC", "colorectal", "pancreatic",
-    "ovarian", "prostate", "melanoma", "solid tumor", "multiple myeloma",
-    "hepatocellular", "bladder cancer", "renal cell",
-]
-
-EXOSOME_KEYWORDS = [
-    "exosome", "extracellular vesicle", "nanoparticle", "microvesicle",
-    "exosome-like", "nanovesicle", "membrane vesicle",
-]
-
-MECHANISM_KEYWORDS = [
-    "cytotoxicity", "apoptosis", "perforin", "granzyme", "FasL", "TRAIL",
-    "NKG2D", "DNAM-1", "ADCC", "tumor killing", "anti-tumor",
-    "drug delivery", "cargo loading", "miRNA", "siRNA", "immunosuppression",
-    "tumor microenvironment", "TME", "immune evasion",
+EFFECT_KEYWORDS = [
+    "anti-inflammatory", "antioxidant", "collagen", "melanin", "brightening",
+    "whitening", "anti-aging", "elasticity", "hair growth", "wound healing",
+    "skin barrier", "moisturizing", "pigmentation", "fibroblast proliferation",
+    "senescence", "rejuvenation", "longevity", "inflammaging", "sasp",
 ]
 
 CELL_TYPES = [
-    "NK-92", "iPSC", "cord blood", "peripheral blood", "K562",
-    "Jurkat", "HeLa", "U87", "PBMC", "T cell", "dendritic cell",
+    "keratinocyte", "fibroblast", "melanocyte", "stem cell",
+    "hacat", "hdfn", "b16f10", "huvec", "mesenchymal",
 ]
 
-NEGATIVE_TERMS = []  # No exclusions — all cancer context is relevant
+NEGATIVE_TERMS = ["cancer", "tumor", "chemotherapy", "carcinoma", "leukemia"]
 
 
 def extract_entities(text: str) -> dict:
     t = text.lower()
     return {
-        "immunotherapy":  list(set(k for k in IMMUNOTHERAPY_KEYWORDS if k.lower() in t)),
-        "cancers":        list(set(k for k in CANCER_KEYWORDS        if k.lower() in t)),
-        "exosome_terms":  list(set(k for k in EXOSOME_KEYWORDS       if k.lower() in t)),
-        "mechanisms":     list(set(k for k in MECHANISM_KEYWORDS      if k.lower() in t)),
-        "cell_types":     list(set(k for k in CELL_TYPES             if k.lower() in t)),
+        "compounds":  list(set(c for c in COMPOUND_KEYWORDS if c in t)),
+        "effects":    list(set(e for e in EFFECT_KEYWORDS   if e in t)),
+        "cell_types": list(set(c for c in CELL_TYPES        if c in t)),
     }
 
 
 def detect_study_type(text: str) -> str:
     t = text.lower()
-    if any(k in t for k in ["clinical trial", "randomized", "rct", "human subjects", "phase i", "phase ii"]):
+    if any(k in t for k in ["clinical trial", "randomized", "rct", "human subjects"]):
         return "clinical"
-    if any(k in t for k in ["in vivo", "mouse model", "rat model", "animal study", "xenograft"]):
+    if any(k in t for k in ["in vivo", "mouse model", "rat model", "animal study"]):
         return "in_vivo"
     if any(k in t for k in ["in vitro", "cell line", "cell culture", "cell-based"]):
         return "in_vitro"
@@ -454,41 +106,12 @@ def score_evidence(study_type: str) -> float:
             "review": 0.5, "unknown": 0.3}.get(study_type, 0.3)
 
 
-def score_relevance(text: str) -> float:
-    """
-    Score relevance to the core hypothesis:
-    CAR-NK cells PRODUCE exosomes → harvested as cell-free cancer therapy.
-
-    Tier 1 (0.6): CAR-NK + exosome + derived/secreted/produced  ← exact paradigm
-    Tier 2 (0.4): NK + exosome + cytotoxic cargo (perforin/TRAIL/granzyme)
-    Tier 3 (0.3): CAR-NK + exosome (any context)
-    Tier 4 (0.2): NK + exosome + cancer
-    Tier 5 (0.1): exosome + cancer (broad)
-    """
+def score_relevance(text: str, condition_terms: list[str]) -> float:
+    """Score based on how many condition keywords from the file appear in the text."""
     t = text.lower()
-
-    car_nk      = any(k in t for k in ["car-nk", "car nk", "chimeric antigen receptor nk",
-                                         "chimeric antigen receptor natural killer"])
-    nk          = any(k in t for k in ["natural killer", "nk cell", "nk-92"])
-    exo         = any(k in t for k in ["exosome", "extracellular vesicle", "nanovesicle", "ev"])
-    derived     = any(k in t for k in ["derived exosome", "secreted exosome", "produced exosome",
-                                        "exosome secretion", "exosome release", "cell-free",
-                                        "acellular", "off-the-shelf"])
-    cytotoxic   = any(k in t for k in ["perforin", "granzyme", "trail", "fasl", "nkg2d",
-                                        "dnam-1", "cytotoxic"])
-    car_display = any(k in t for k in ["surface display", "membrane display", "car-expressing",
-                                        "armed", "decorated", "functionalized", "car display"])
-    cancer      = any(k in t for k in ["cancer", "tumor", "leukemia", "lymphoma",
-                                        "glioma", "glioblastoma", "malignancy"])
-
-    if car_nk and exo and derived:          return 1.0   # Tier 1 — exact paradigm
-    if car_nk and exo and car_display:      return 0.9   # CAR displayed on exosome surface
-    if nk and exo and cytotoxic and cancer: return 0.8   # Tier 2 — NK exosome cytotoxic cargo
-    if car_nk and exo:                      return 0.7   # Tier 3 — CAR-NK + exosome any
-    if nk and exo and cancer:               return 0.5   # Tier 4 — NK exosome cancer
-    if exo and cancer:                      return 0.3   # Tier 5 — broad exosome cancer
-    if cancer:                              return 0.1
-    return 0.0
+    hits = sum(1 for term in condition_terms if term.lower() in t)
+    neg  = sum(1 for term in NEGATIVE_TERMS if term in t)
+    return round(max((hits - neg * 2) / max(len(condition_terms), 10), 0.0), 3)
 
 
 def score_recency(year: str) -> float:
@@ -501,6 +124,8 @@ def score_recency(year: str) -> float:
 def compute_final_score(evidence: float, relevance: float, recency: float) -> float:
     return round(0.40 * evidence + 0.40 * relevance + 0.20 * recency, 3)
 
+
+# ─── PubMed fetch helpers ─────────────────────────────────────────────────────
 
 def search_pubmed(query: str, max_results: int) -> list:
     handle = Entrez.esearch(db="pubmed", term=query, retmax=max_results, sort="relevance")
@@ -538,7 +163,7 @@ def fetch_details(pmids: list) -> list:
     return all_records
 
 
-def parse_record(record: dict, label: str) -> dict | None:
+def parse_record(record: dict, label: str, condition_terms: list[str]) -> dict | None:
     try:
         article = record["MedlineCitation"]["Article"]
         pmid    = str(record["MedlineCitation"]["PMID"])
@@ -587,12 +212,12 @@ def parse_record(record: dict, label: str) -> dict | None:
         for m in record["MedlineCitation"].get("MeshHeadingList", []):
             mesh.append(str(m.get("DescriptorName", "")))
 
-        # ── Scoring layer ──────────────────────────────────────
+        # ── Scoring ──────────────────────────────────────────────────────────
         full_text   = f"{title} {abstract_text}"
         entities    = extract_entities(full_text)
         study_type  = detect_study_type(full_text)
         ev_score    = score_evidence(study_type)
-        rel_score   = score_relevance(full_text)
+        rel_score   = score_relevance(full_text, condition_terms)
         rec_score   = score_recency(year)
         final_score = compute_final_score(ev_score, rel_score, rec_score)
 
@@ -608,7 +233,7 @@ def parse_record(record: dict, label: str) -> dict | None:
             "search_label":   label,
             "url":            f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
             "fetched_at":     datetime.now().isoformat(),
-            # ── Intelligence fields ──
+            # Intelligence fields
             "entities":       entities,
             "study_type":     study_type,
             "evidence_score": ev_score,
@@ -629,24 +254,101 @@ def deduplicate(records: list) -> list:
     return unique
 
 
+# ─── Keyword file parser ──────────────────────────────────────────────────────
+
+def load_conditions(filepath: str) -> list[str]:
+    """
+    Reads a text file of comma-separated keywords.
+    Handles multi-line files, strips whitespace, skips blanks.
+
+    Example file contents:
+        aging, senescence, anti-aging,
+        rejuvenation, SASP, inflammaging,
+        neurodegeneration, wound healing
+    """
+    path = Path(filepath)
+    if not path.exists():
+        print(f"ERROR: File not found: {filepath}")
+        sys.exit(1)
+
+    raw = path.read_text(encoding="utf-8")
+    # Split on commas, collapse newlines, strip whitespace
+    terms = [t.strip() for t in raw.replace("\n", ",").split(",")]
+    terms = [t for t in terms if t]  # drop empty strings
+
+    if not terms:
+        print(f"ERROR: No keywords found in {filepath}")
+        sys.exit(1)
+
+    return terms
+
+
+def build_queries(condition_terms: list[str], max_per_term: int) -> list[dict]:
+    """
+    Build one PubMed query per condition term:
+        EV_CORE AND ("<term>"[Title/Abstract])
+    """
+    queries = []
+    for term in condition_terms:
+        label = term.lower().replace(" ", "_").replace("'", "").replace("/", "_")
+        query = f'{EV_CORE} AND ("{term}"[Title/Abstract])'
+        queries.append({
+            "label": f"ev_{label}",
+            "query": query,
+            "max":   max_per_term,
+            "term":  term,
+        })
+    return queries
+
+
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    parser = argparse.ArgumentParser(
+        description="Fetch PubMed exosome abstracts filtered by condition keywords.",
+        epilog="Example: python 01_fetch_pubmed.py conditions.txt --max 200 --out data/abstracts.json"
+    )
+    parser.add_argument(
+        "conditions_file",
+        help="Path to a text file with condition keywords, comma-separated. "
+             "Example: aging, senescence, anti-aging, wound healing"
+    )
+    parser.add_argument(
+        "--max",
+        type=int,
+        default=MAX_PER_TERM,
+        help=f"Max PubMed results per condition keyword (default: {MAX_PER_TERM})"
+    )
+    parser.add_argument(
+        "--out",
+        type=str,
+        default=str(OUTPUT_FILE),
+        help=f"Output JSON file path (default: {OUTPUT_FILE})"
+    )
+    args = parser.parse_args()
+
+    output_path = Path(args.out)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ── Load keywords ────────────────────────────────────────────────────────
+    condition_terms = load_conditions(args.conditions_file)
+    queries         = build_queries(condition_terms, args.max)
 
     print("=" * 65)
-    print("ExoRAG — PubMed Fetcher")
-    print("Focus: CAR-NK-Derived Exosomes as Cancer Immunotherapy")
+    print("ExoRAG — PubMed Fetcher (keyword-file mode)")
     print("=" * 65)
-    print(f"Entrez email : {Entrez.email}")
-    print(f"Output       : {OUTPUT_FILE}")
-    print(f"Queries      : {len(QUERIES)}")
+    print(f"Entrez email     : {Entrez.email}")
+    print(f"Conditions file  : {args.conditions_file}")
+    print(f"Keywords loaded  : {len(condition_terms)}")
+    print(f"Max per keyword  : {args.max}")
+    print(f"Output           : {output_path}")
+    print(f"\nKeywords: {', '.join(condition_terms)}")
     print()
 
     all_parsed = []
 
-    for q in QUERIES:
-        print(f"\n[{q['label']}]")
+    for q in queries:
+        print(f"\n[{q['label']}]  term: \"{q['term']}\"")
         print(f"  Searching (max {q['max']})...", end=" ", flush=True)
         pmids = search_pubmed(q["query"], q["max"])
         print(f"{len(pmids)} PMIDs found")
@@ -661,7 +363,7 @@ def main():
 
         parsed = []
         for r in records:
-            p = parse_record(r, q["label"])
+            p = parse_record(r, q["label"], condition_terms)
             if p:
                 parsed.append(p)
 
@@ -674,13 +376,12 @@ def main():
     print(f"Total fetched  : {len(all_parsed)}")
     print(f"After dedup    : {len(unique)}")
 
-    # Sort by final_score — best papers first
     unique_sorted = sorted(unique, key=lambda x: x.get("final_score", 0), reverse=True)
 
-    with open(OUTPUT_FILE, "w") as f:
+    with open(output_path, "w") as f:
         json.dump(unique_sorted, f, indent=2)
 
-    print(f"Saved to       : {OUTPUT_FILE}")
+    print(f"Saved to       : {output_path}")
 
     if unique_sorted:
         s = unique_sorted[0]
@@ -688,39 +389,25 @@ def main():
         print(f"  PMID         : {s['pmid']}")
         print(f"  Title        : {s['title'][:70]}...")
         print(f"  Year         : {s['year']} | Journal: {s['journal'][:45]}")
-        print(f"  Study type   : {s.get('study_type','?')}")
-        print(f"  Final score  : {s.get('final_score','?')}")
-        print(f"  Immunotherapy: {', '.join(s.get('entities',{}).get('immunotherapy',[])[:5]) or 'none detected'}")
-        print(f"  Cancers      : {', '.join(s.get('entities',{}).get('cancers',[])[:5]) or 'none detected'}")
+        print(f"  Study type   : {s.get('study_type', '?')}")
+        print(f"  Final score  : {s.get('final_score', '?')}")
+        print(f"  Compounds    : {', '.join(s.get('entities', {}).get('compounds', [])[:5]) or 'none detected'}")
 
-    # Print score distribution
     scores = [r.get("final_score", 0) for r in unique_sorted]
     if scores:
         print(f"\nScore distribution:")
         print(f"  Top paper    : {max(scores):.3f}")
         print(f"  Average      : {sum(scores)/len(scores):.3f}")
         print(f"  Bottom paper : {min(scores):.3f}")
-
         clinical = sum(1 for r in unique_sorted if r.get("study_type") == "clinical")
         in_vivo  = sum(1 for r in unique_sorted if r.get("study_type") == "in_vivo")
         in_vitro = sum(1 for r in unique_sorted if r.get("study_type") == "in_vitro")
-        reviews  = sum(1 for r in unique_sorted if r.get("study_type") == "review")
-        car_nk_exo_derived = sum(
-            1 for r in unique_sorted
-            if r.get("relevance_score", 0) >= 1.0
-        )
-        car_nk_exo = sum(
-            1 for r in unique_sorted
-            if r.get("relevance_score", 0) >= 0.7
-        )
-        print(f"\nParadigm match (CAR-NK → exosome → cancer, exact): {car_nk_exo_derived}")
-        print(f"High relevance (score ≥ 0.7):                       {car_nk_exo}")
-
+        review   = sum(1 for r in unique_sorted if r.get("study_type") == "review")
         print(f"\nStudy types:")
         print(f"  Clinical : {clinical}")
         print(f"  In vivo  : {in_vivo}")
         print(f"  In vitro : {in_vitro}")
-        print(f"  Reviews  : {reviews}")
+        print(f"  Review   : {review}")
 
     print(f"\n✓ Done — next step: python scripts/02_build_index.py")
 
